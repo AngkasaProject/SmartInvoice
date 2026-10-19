@@ -1,12 +1,36 @@
-// ... (biarkan interface dan fungsi formatCaptionTemplate & buildDirectWhatsAppUrl tetap sama) ...
+/**
+ * OpenWA API Service Integration
+ * Final Revision: Menyediakan semua fungsi yang dibutuhkan komponen, menggunakan API OpenWA yang benar, dan dilengkapi validasi.
+ */
 
+export interface OpenWAConfig {
+  serverUrl: string; // Contoh: https://wa.angkasaproject.web.id
+  apiKey: string;
+  sessionId: string; // Contoh: chatbot1
+}
+
+// 1. Fungsi untuk membuat teks caption (Template)
+export function formatCaptionTemplate(invoiceData: any): string {
+  // Anda bisa menyesuaikan teks ini dengan data invoice Anda
+  return `Halo, berikut adalah invoice untuk tagihan Anda. Terima kasih telah menggunakan layanan kami.`;
+}
+
+// 2. Fungsi untuk membuat URL WhatsApp Web langsung (Fallback)
+export function buildDirectWhatsAppUrl(phone: string, text: string): string {
+  // Membersihkan nomor HP
+  let cleaned = phone.replace(/\D/g, '');
+  if (cleaned.startsWith('0')) cleaned = '62' + cleaned.slice(1);
+  return `https://wa.me/${cleaned}?text=${encodeURIComponent(text)}`;
+}
+
+// 3. Fungsi Utama: Kirim PDF via OpenWA
 export async function sendInvoicePdfViaOpenWa(
   config: OpenWAConfig,
   chatId: string, 
   base64Pdf: string,
   filename: string
 ): Promise<{ success: boolean; message: string; data?: any }> {
-  // --- VALIDASI BARU ---
+  // Validasi konfigurasi
   if (!config.serverUrl || !config.apiKey || !config.sessionId) {
     return { 
       success: false, 
@@ -16,10 +40,9 @@ export async function sendInvoicePdfViaOpenWa(
   if (!chatId) {
     return { success: false, message: 'Nomor WhatsApp (Chat ID) tidak valid.' };
   }
-  // ---------------------
 
   try {
-    const baseUrl = config.serverUrl.replace(/\/$/, ''); // <-- Ini penyebab error jika serverUrl undefined
+    const baseUrl = config.serverUrl.replace(/\/$/, ''); 
     const endpoint = `${baseUrl}/api/sessions/${config.sessionId}/messages/send-document`;
 
     const body = {
@@ -51,16 +74,15 @@ export async function sendInvoicePdfViaOpenWa(
   }
 }
 
+// 4. Fungsi Tes Koneksi
 export async function testOpenWaConnection(
   serverUrl: string,
   apiKey: string,
   sessionId: string = 'chatbot1' 
 ): Promise<{ success: boolean; message: string }> {
-  // --- VALIDASI BARU ---
   if (!serverUrl || !apiKey) {
     return { success: false, message: 'Server URL dan API Key tidak boleh kosong.' };
   }
-  // ---------------------
 
   try {
     const baseUrl = serverUrl.replace(/\/$/, '');
