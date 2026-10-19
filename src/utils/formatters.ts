@@ -56,6 +56,15 @@ export function cleanWhatsAppNumber(phone: string): string {
   return cleaned;
 }
 
+/**
+ * REVISI BARU: Mengubah nomor HP menjadi format JID OpenWA (contoh: 628123456789@c.us)
+ */
+export function formatToOpenWAChatId(phone: string): string {
+  const cleaned = cleanWhatsAppNumber(phone);
+  if (!cleaned) return '';
+  return `${cleaned}@c.us`;
+}
+
 export function formatDisplayPhone(phone: string): string {
   const cleaned = cleanWhatsAppNumber(phone);
   if (!cleaned) return phone || '-';
