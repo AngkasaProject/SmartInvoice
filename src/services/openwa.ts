@@ -1,6 +1,6 @@
 /**
  * OpenWA API Service Integration
- * Final Revision: Menyesuaikan dengan standar API OpenWA v0.25.0
+ * Final Revision: Mendukung pengiriman PDF beserta caption (teks pengantar)
  */
 
 export interface OpenWAConfig {
@@ -21,14 +21,16 @@ export function buildDirectWhatsAppUrl(phone: string, text: string): string {
   return `https://wa.me/${cleaned}?text=${encodeURIComponent(text)}`;
 }
 
-// 3. Fungsi Utama: Kirim PDF via OpenWA
+// 3. Fungsi Utama: Kirim PDF via OpenWA (DENGAN CAPTION)
 export async function sendInvoicePdfViaOpenWa(
   config: OpenWAConfig,
   chatId: string, 
   base64Pdf: string,
-  filename: string
+  filename: string,
+  caption?: string // Parameter opsional untuk teks pengantar
 ): Promise<{ success: boolean; message: string; data?: any }> {
-  // Validasi konfigurasi (Tidak ada hardcode di sini)
+  
+  // Validasi konfigurasi
   if (!config.serverUrl || !config.apiKey || !config.sessionId) {
     return { 
       success: false, 
@@ -43,7 +45,7 @@ export async function sendInvoicePdfViaOpenWa(
     const baseUrl = config.serverUrl.replace(/\/$/, ''); 
     const endpoint = `${baseUrl}/api/sessions/${config.sessionId}/messages/send-document`;
 
-    // PENTING: Bersihkan prefix Base64 jika ada (misal: "data:application/pdf;base64,")
+    // Bersihkan prefix Base64 jika ada (misal: "data:application/pdf;base64,")
     const cleanBase64 = base64Pdf.includes(',') ? base64Pdf.split(',')[1] : base64Pdf;
 
     const body = {
@@ -51,6 +53,7 @@ export async function sendInvoicePdfViaOpenWa(
       filename: filename,
       mimetype: 'application/pdf',
       base64: cleanBase64,
+      caption: caption || '', // Sisipkan teks pengantar ke dalam request body
     };
 
     const response = await fetch(endpoint, {
@@ -68,7 +71,7 @@ export async function sendInvoicePdfViaOpenWa(
       throw new Error(data.message || data.error || 'Gagal mengirim dokumen via OpenWA');
     }
 
-    return { success: true, message: 'Dokumen berhasil dikirim', data: data };
+    return { success: true, message: 'Dokumen dan pesan berhasil dikirim', data: data };
   } catch (error: any) {
     console.error('OpenWA Error:', error);
     return { success: false, message: error.message || 'Terjadi kesalahan jaringan' };
@@ -79,7 +82,7 @@ export async function sendInvoicePdfViaOpenWa(
 export async function testOpenWaConnection(
   serverUrl: string,
   apiKey: string,
-  sessionId: string // Tidak ada nilai default hardcode, wajib diisi dari form
+  sessionId: string
 ): Promise<{ success: boolean; message: string }> {
   if (!serverUrl || !apiKey || !sessionId) {
     return { success: false, message: 'Server URL, API Key, dan Session ID (UUID) wajib diisi.' };
@@ -101,7 +104,6 @@ export async function testOpenWaConnection(
     const data = await response.json();
     const statusSesi = data?.status?.toLowerCase();
 
-    // Perbaikan: Menerima status 'ready' (standar OpenWA) dan 'connected'
     if (statusSesi === 'connected' || statusSesi === 'ready') {
       return { success: true, message: 'Terhubung ke OpenWA (Sesi Siap)' };
     } else {
