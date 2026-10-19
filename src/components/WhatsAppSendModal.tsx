@@ -56,7 +56,6 @@ export const WhatsAppSendModal: React.FC<WhatsAppSendModalProps> = ({
   const checkConnection = async () => {
     setServerStatus('testing');
     try {
-      // PERBAIKAN 1: Tambahkan config.sessionName (UUID) sebagai parameter ketiga
       const res = await testOpenWaConnection(
         config.serverUrl, 
         config.apiKey, 
@@ -90,7 +89,6 @@ export const WhatsAppSendModal: React.FC<WhatsAppSendModalProps> = ({
     setPdfGenerating(true);
 
     try {
-      // 1. Generate PDF dari DOM
       const pdfResult = await generateInvoicePdf(
         'printable-invoice-element',
         `${invoice.invoiceNumber}.pdf`
@@ -99,26 +97,26 @@ export const WhatsAppSendModal: React.FC<WhatsAppSendModalProps> = ({
 
       setStatusMessage(`Mengirim dokumen ke OpenWA API...`);
 
-      // Bersihkan prefix data URI (data:application/pdf;base64,) jika ada
       const cleanBase64 = pdfResult.base64DataUri.includes(',') 
         ? pdfResult.base64DataUri.split(',')[1] 
         : pdfResult.base64DataUri;
 
-      // PERBAIKAN 2: Panggil fungsi sesuai dengan parameter yang benar
+      // PERBAIKAN: Menambahkan 'caption' sebagai parameter kelima
       const response = await sendInvoicePdfViaOpenWa(
         {
           serverUrl: config.serverUrl,
           apiKey: config.apiKey,
-          sessionId: config.sessionName // Gunakan UUID
+          sessionId: config.sessionName
         },
-        `${recipientClean}@c.us`, // Chat ID tujuan
-        cleanBase64, // Base64 murni
-        `${invoice.invoiceNumber}.pdf` // Nama File
+        `${recipientClean}@c.us`, 
+        cleanBase64, 
+        `${invoice.invoiceNumber}.pdf`,
+        caption // <-- Mengirim pesan pengantar
       );
 
       if (response.success) {
         setIsSuccess(true);
-        setStatusMessage(response.message || 'Invoice PDF berhasil dikirim!');
+        setStatusMessage(response.message || 'Invoice PDF dan pesan berhasil dikirim!');
 
         try {
           confetti({ particleCount: 60, spread: 70, origin: { y: 0.6 } });
@@ -173,7 +171,6 @@ export const WhatsAppSendModal: React.FC<WhatsAppSendModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
       <div className="bg-white rounded-2xl shadow-2xl max-w-xl w-full border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
-        {/* Header */}
         <div className="px-6 py-4 bg-gradient-to-r from-emerald-600 to-teal-700 text-white flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-white/10 rounded-xl">
@@ -181,9 +178,7 @@ export const WhatsAppSendModal: React.FC<WhatsAppSendModalProps> = ({
             </div>
             <div>
               <h2 className="text-base font-bold leading-snug">Kirim Invoice via WhatsApp OpenWA</h2>
-              <p className="text-xs text-emerald-100">
-                Otomatis kirim file PDF langsung ke chat pelanggan
-              </p>
+              <p className="text-xs text-emerald-100">Otomatis kirim file PDF langsung ke chat pelanggan</p>
             </div>
           </div>
           <button onClick={onClose} className="p-1.5 hover:bg-white/20 rounded-lg transition">
@@ -191,7 +186,6 @@ export const WhatsAppSendModal: React.FC<WhatsAppSendModalProps> = ({
           </button>
         </div>
 
-        {/* Body */}
         <div className="p-6 overflow-y-auto space-y-5 text-slate-800 text-sm">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 bg-slate-50 rounded-xl border border-slate-200">
             <div>
@@ -285,7 +279,6 @@ export const WhatsAppSendModal: React.FC<WhatsAppSendModalProps> = ({
           )}
         </div>
 
-        {/* Footer Actions */}
         <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3">
           <button
             type="button"
