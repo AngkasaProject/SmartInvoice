@@ -837,3 +837,473 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   onClick={() => {
                     navigator.clipboard.writeText(webhookEndpointUrl);
                     setCopiedWebhookUrl(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg text-xs font-bold bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 transition shrink-0 shadow-xs"
+                >
+                  {copiedWebhookUrl ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
+                  {copiedWebhookUrl ? 'Tersalin' : 'Salin URL'}
+                </button>
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Gunakan URL ini sebagai Webhook Target URL di pengaturan WooCommerce, Shopify, atau API backend toko Anda.
+              </p>
+            </div>
+
+            {/* Secret Key & Configuration */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Store Secret API Key (Bearer Token)
+                </label>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={storeForm.webhookSecret}
+                    onChange={(e) => setStoreForm({ ...storeForm, webhookSecret: e.target.value })}
+                    className="flex-1 text-xs font-mono p-2 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-1 focus:ring-purple-500"
+                    placeholder="sec_store_xxxx"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(storeForm.webhookSecret);
+                      setCopiedSecretKey(true);
+                      toast.success('Secret Key disalin!');
+                      setTimeout(() => setCopiedSecretKey(false), 2000);
+                    }}
+                    className="p-2 border border-slate-200 rounded-lg hover:bg-slate-100 text-slate-600"
+                    title="Salin Secret Key"
+                  >
+                    {copiedSecretKey ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleGenerateNewSecret}
+                    className="p-2 border border-slate-200 rounded-lg hover:bg-slate-100 text-slate-600"
+                    title="Generate Key Baru"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Prefix Nomor Invoice Toko
+                </label>
+                <input
+                  type="text"
+                  value={storeForm.invoicePrefix || 'INV-STORE'}
+                  onChange={(e) => setStoreForm({ ...storeForm, invoicePrefix: e.target.value })}
+                  className="w-full text-xs font-mono p-2 rounded-lg border border-slate-200 bg-white"
+                  placeholder="INV-STORE"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Status Default Pesanan Toko Masuk
+                </label>
+                <select
+                  value={storeForm.defaultOrderStatus}
+                  onChange={(e) => setStoreForm({ ...storeForm, defaultOrderStatus: e.target.value as any })}
+                  className="w-full text-xs p-2 rounded-lg border border-slate-200 bg-white"
+                >
+                  <option value="unpaid">Belum Dibayar (Unpaid / COD / Transfer)</option>
+                  <option value="paid">Lunas (Sudah Lunas via Payment Gateway)</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Simulator Button */}
+            <div className="p-4 bg-purple-50/60 border border-purple-200 rounded-xl space-y-2">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-xs font-bold text-purple-950 flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-purple-600" />
+                    Uji Coba Pesanan Toko (Simulator Webhook)
+                  </h3>
+                  <p className="text-[11px] text-purple-900/80 mt-0.5">
+                    Kirim contoh pesanan dari toko online secara virtual untuk melihat langsung proses pembuatan invoice otomatis.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleSimulateStoreOrder}
+                  disabled={isSimulating}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-purple-700 text-white hover:bg-purple-800 transition shadow-xs shrink-0 disabled:opacity-50"
+                >
+                  {isSimulating ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShoppingBag className="w-4 h-4" />}
+                  Kirim Pesanan Contoh Toko
+                </button>
+              </div>
+            </div>
+
+            {/* JSON Schema Guide */}
+            <div className="space-y-2 pt-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <Code2 className="w-4 h-4 text-slate-600" />
+                  Format JSON Request Payload (Contoh Integrasi Toko)
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(sampleJsonCode);
+                    setCopiedPayload(true);
+                    toast.success('Contoh JSON disalin!');
+                    setTimeout(() => setCopiedPayload(false), 2000);
+                  }}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50"
+                >
+                  {copiedPayload ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                  Salin JSON
+                </button>
+              </div>
+              <pre className="text-[10px] font-mono bg-slate-900 text-slate-200 p-3.5 rounded-xl overflow-x-auto max-h-48 leading-relaxed">
+                {sampleJsonCode}
+              </pre>
+            </div>
+          </div>
+
+          <div className="flex justify-end">
+            <button
+              type="submit"
+              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold text-white bg-purple-700 hover:bg-purple-800 transition shadow-sm"
+            >
+              <Save className="w-4 h-4" />
+              Simpan Pengaturan API Toko
+            </button>
+          </div>
+        </form>
+      )}
+
+      {/* Tab 4: Database & Migrasi (Supabase vs Lokal) */}
+      {activeTab === 'database' && (
+        <div className="space-y-6">
+          <form onSubmit={handleSaveDbSettings} className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-6">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+              <div>
+                <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <Database className="w-4 h-4 text-blue-600" />
+                  Mode Database & Penyimpanan
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Pilih database aktif antara Supabase Cloud atau Database Lokal (dengan dukungan migrasi sekali klik)
+                </p>
+              </div>
+
+              <div className="flex items-center gap-1.5 text-xs font-bold">
+                <span className="text-slate-500">Mode Saat Ini:</span>
+                <span
+                  className={`px-2.5 py-0.5 rounded-full ${
+                    dbSettings.activeDriver === 'supabase'
+                      ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                      : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                  }`}
+                >
+                  {dbSettings.activeDriver === 'supabase' ? 'Supabase Cloud' : 'Database Lokal'}
+                </span>
+              </div>
+            </div>
+
+            {/* Driver Selection Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div
+                onClick={() => setDbSettings({ ...dbSettings, activeDriver: 'supabase' })}
+                className={`cursor-pointer p-4 rounded-xl border-2 transition flex items-start gap-3 ${
+                  dbSettings.activeDriver === 'supabase'
+                    ? 'border-blue-600 bg-blue-50/40 shadow-xs'
+                    : 'border-slate-200 bg-white hover:border-slate-300'
+                }`}
+              >
+                <div
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                    dbSettings.activeDriver === 'supabase'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-slate-100 text-slate-600'
+                  }`}
+                >
+                  <Cloud className="w-5 h-5" />
+                </div>
+                <div className="flex-1">
+                  <div className="text-xs font-bold text-slate-900 flex items-center justify-between">
+                    <span>Supabase Cloud (PostgreSQL)</span>
+                    {dbSettings.activeDriver === 'supabase' && (
+                      <span className="text-[10px] text-blue-700 font-extrabold bg-blue-100 px-1.5 py-0.2 rounded">
+                        Aktif
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Data tersimpan di cloud PostgreSQL Supabase secara realtime dan multi-perangkat.
+                  </p>
+                </div>
+              </div>
+
+              <div
+                onClick={() => setDbSettings({ ...dbSettings, activeDriver: 'local' })}
+                className={`cursor-pointer p-4 rounded-xl border-2 transition flex items-start gap-3 ${
+                  dbSettings.activeDriver === 'local'
+                    ? 'border-emerald-600 bg-emerald-50/40 shadow-xs'
+                    : 'border-slate-200 bg-white hover:border-slate-300'
+                }`}
+              >
+                <div
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                    dbSettings.activeDriver === 'local'
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-slate-100 text-slate-600'
+                  }`}
+                >
+                  <HardDrive className="w-5 h-5" />
+                </div>
+                <div className="flex-1">
+                  <div className="text-xs font-bold text-slate-900 flex items-center justify-between">
+                    <span>Database Lokal (Offline / Deploy Lokal)</span>
+                    {dbSettings.activeDriver === 'local' && (
+                      <span className="text-[10px] text-emerald-700 font-extrabold bg-emerald-100 px-1.5 py-0.2 rounded">
+                        Aktif
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Penyimpanan lokal di browser / server lokal. Beroperasi 100% tanpa internet.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Supabase Credentials Input */}
+            <div className="p-4 bg-slate-50/80 rounded-xl border border-slate-200 space-y-4">
+              <div className="text-xs font-bold text-slate-800 flex items-center justify-between">
+                <span>Kredensial Supabase Project:</span>
+                <span className="text-[11px] font-normal text-slate-400">
+                  Dapatkan dari menu Settings &gt; API di dashboard Supabase
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                    Project URL (VITE_SUPABASE_URL)
+                  </label>
+                  <input
+                    type="text"
+                    value={dbSettings.supabaseUrl}
+                    onChange={(e) => setDbSettings({ ...dbSettings, supabaseUrl: e.target.value })}
+                    className="w-full text-xs font-mono p-2.5 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    placeholder="https://xyzcompany.supabase.co"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                    Anon Public Key (VITE_SUPABASE_ANON_KEY)
+                  </label>
+                  <input
+                    type="password"
+                    value={dbSettings.supabaseAnonKey}
+                    onChange={(e) =>
+                      setDbSettings({ ...dbSettings, supabaseAnonKey: e.target.value })
+                    }
+                    className="w-full text-xs font-mono p-2.5 rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6..."
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={handleTestSupabase}
+                  disabled={supabaseTestStatus === 'loading'}
+                  className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-900 text-white hover:bg-slate-800 transition shadow-xs disabled:opacity-50"
+                >
+                  {supabaseTestStatus === 'loading' ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      Menguji Supabase...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 text-blue-400" />
+                      Tes Koneksi Supabase
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="submit"
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 transition shadow-xs"
+                >
+                  <Save className="w-4 h-4" />
+                  Simpan Mode Database
+                </button>
+              </div>
+
+              {supabaseTestMsg && (
+                <div
+                  className={`p-3 rounded-xl text-xs font-medium ${
+                    supabaseTestStatus === 'success'
+                      ? 'bg-emerald-50 text-emerald-900 border border-emerald-200'
+                      : 'bg-rose-50 text-rose-900 border border-rose-200'
+                  }`}
+                >
+                  {supabaseTestMsg}
+                </div>
+              )}
+            </div>
+
+            {/* Migration Tool Box */}
+            <div className="p-5 bg-gradient-to-br from-indigo-50/50 to-blue-50/40 rounded-xl border border-indigo-100 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                    <ArrowRightLeft className="w-4 h-4 text-indigo-600" />
+                    Alat Migrasi Database Sekali Klik
+                  </h3>
+                  <p className="text-[11px] text-indigo-800/80 mt-0.5">
+                    Pindahkan seluruh data invoice Anda secara bolak-balik antara Supabase Cloud dan Database Lokal kapan saja.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={handleMigrateToSupabase}
+                  disabled={isMigrating}
+                  className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition shadow-xs disabled:opacity-50"
+                >
+                  {isMigrating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Cloud className="w-4 h-4" />}
+                  Migrasikan Lokal &gt; Supabase Cloud
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleMigrateToLocal}
+                  disabled={isMigrating}
+                  className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold text-slate-800 bg-white border border-slate-300 hover:bg-slate-50 transition shadow-xs disabled:opacity-50"
+                >
+                  {isMigrating ? <Loader2 className="w-4 h-4 animate-spin" /> : <HardDrive className="w-4 h-4" />}
+                  Tarik Supabase Cloud &gt; Database Lokal
+                </button>
+              </div>
+            </div>
+
+            {/* SQL Schema Section */}
+            <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <FileCode className="w-4 h-4 text-slate-600" />
+                    Skrip SQL Skema Tabel Supabase (DDL)
+                  </span>
+                  <span className="text-[10px] text-slate-400">
+                    Jalankan di Supabase Dashboard &gt; SQL Editor jika tabel belum dibuat
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCopySql}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 transition shadow-xs"
+                >
+                  {copiedSql ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-600" /> Tersalin!
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" /> Salin Skrip SQL
+                    </>
+                  )}
+                </button>
+              </div>
+              <pre className="text-[10px] font-mono bg-slate-900 text-slate-200 p-3 rounded-lg overflow-x-auto max-h-40 leading-relaxed">
+                {generateSupabaseSqlSchema()}
+              </pre>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Tab 5: Cadangan & Data */}
+      {activeTab === 'data' && (
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-6">
+          <div>
+            <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+              <Database className="w-4 h-4 text-indigo-600" />
+              Pencadangan & Pemulihan Berkas JSON
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Simpan dan pulihkan seluruh riwayat invoice dalam berkas JSON mandiri
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="p-5 rounded-2xl border border-slate-200 bg-slate-50 flex flex-col justify-between space-y-3">
+              <div>
+                <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <Download className="w-4 h-4 text-indigo-600" /> Unduh Cadangan (Export JSON)
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                  Unduh seluruh daftar invoice ({invoices.length} data) serta identitas usaha ke file cadangan.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleExportBackup}
+                className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 transition shadow-xs"
+              >
+                <Download className="w-3.5 h-3.5" /> Unduh File Cadangan
+              </button>
+            </div>
+
+            <div className="p-5 rounded-2xl border border-slate-200 bg-slate-50 flex flex-col justify-between space-y-3">
+              <div>
+                <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <Upload className="w-4 h-4 text-emerald-600" /> Pulihkan Data (Import JSON)
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                  Unggah file cadangan JSON yang pernah diunduh sebelumnya untuk mengembalikan data.
+                </p>
+              </div>
+              <label className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 transition shadow-xs cursor-pointer">
+                <Upload className="w-3.5 h-3.5" /> Pilih File JSON Cadangan
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  onChange={handleImportBackup}
+                  className="hidden"
+                />
+              </label>
+            </div>
+          </div>
+
+          <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+            <div>
+              <span className="font-bold text-slate-800">Muat Ulang Data Sampel Default:</span>
+              <p className="text-[11px] text-slate-400">
+                Kembalikan contoh tagihan dan pengaturan usaha awal untuk demonstrasi.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm('Muat ulang data contoh invoice dan reset pengaturan?')) {
+                  onResetData();
+                  toast.success('Data contoh berhasil dimuat!');
+                }
+              }}
+              className="px-3.5 py-1.5 rounded-xl border border-slate-300 text-slate-600 hover:bg-slate-100 font-semibold transition"
+            >
+              Reset ke Data Contoh
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
