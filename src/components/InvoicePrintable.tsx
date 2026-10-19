@@ -170,7 +170,7 @@ export const InvoicePrintable: React.FC<InvoicePrintableProps> = ({
       {/* Garis Pemisah */}
       <div className="border-t-2 border-slate-300 mb-4"></div>
 
-      {/* 3. TABEL PRODUK & ONGKIR */}
+      {/* 3. TABEL PRODUK (Hanya Barang) */}
       <table className="w-full text-xs mb-6">
         <thead>
           <tr className="text-left text-slate-800 font-bold uppercase tracking-wide border-b border-slate-300">
@@ -194,30 +194,26 @@ export const InvoicePrintable: React.FC<InvoicePrintableProps> = ({
               <td className="py-4 text-right text-slate-900 font-semibold">{formatRupiah(item.amount)}</td>
             </tr>
           ))}
-          
-          {/* BARIS ONGKIR DINAMIS */}
-          {invoice.shippingFee > 0 && (
-            <tr>
-              <td className="py-4 pr-4" colSpan={3}>
-                <div className="font-bold text-slate-800">Ongkos Kirim</div>
-                <div className="text-[11px] text-slate-500 mt-1">Biaya pengiriman pesanan</div>
-              </td>
-              <td className="py-4 text-right text-slate-900 font-semibold">
-                {formatRupiah(invoice.shippingFee)}
-              </td>
-            </tr>
-          )}
         </tbody>
       </table>
 
-      {/* 4. KALKULASI */}
+      {/* 4. KALKULASI (Ongkir Masuk ke Sini) */}
       <div className="flex justify-end mb-10">
         <div className="w-full sm:w-1/2 text-xs space-y-2">
           
+          {/* Menghitung total kuantitas barang, bukan jumlah baris */}
           <div className="flex justify-between font-bold text-slate-900 border-b border-slate-200 pb-2">
-            <span>TOTAL HARGA ({invoice.items.length} BARANG)</span>
+            <span>TOTAL HARGA ({invoice.items.reduce((sum, item) => sum + item.quantity, 0)} BARANG)</span>
             <span>{formatRupiah(invoice.subtotal)}</span>
           </div>
+
+          {/* ONGKIR DIPINDAHKAN KE SINI */}
+          {invoice.shippingFee > 0 && (
+            <div className="flex justify-between text-slate-600">
+              <span>Ongkos Kirim</span>
+              <span>{formatRupiah(invoice.shippingFee)}</span>
+            </div>
+          )}
 
           {invoice.discountAmount > 0 && (
             <div className="flex justify-between text-emerald-600">
@@ -233,9 +229,9 @@ export const InvoicePrintable: React.FC<InvoicePrintableProps> = ({
             </div>
           )}
 
-          <div className="flex justify-between font-bold text-slate-900 border-t border-slate-200 pt-2">
-            <span>TOTAL TAGIHAN</span>
-            <span>{formatRupiah(invoice.total)}</span>
+          <div className="flex justify-between font-bold text-slate-900 border-t border-slate-200 pt-2 mt-2">
+            <span className="text-sm">TOTAL TAGIHAN</span>
+            <span className="text-sm">{formatRupiah(invoice.total)}</span>
           </div>
         </div>
       </div>
