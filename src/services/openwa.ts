@@ -1,23 +1,21 @@
 /**
  * OpenWA API Service Integration
- * Final Revision: Menyediakan semua fungsi yang dibutuhkan komponen, menggunakan API OpenWA yang benar, dan dilengkapi validasi.
+ * Final Revision: Menyesuaikan dengan standar API OpenWA v0.25.0
  */
 
 export interface OpenWAConfig {
   serverUrl: string; // Contoh: https://wa.angkasaproject.web.id
   apiKey: string;
-  sessionId: string; // Contoh: chatbot1
+  sessionId: string; // Harus UUID (diambil dari Pengaturan)
 }
 
 // 1. Fungsi untuk membuat teks caption (Template)
 export function formatCaptionTemplate(invoiceData: any): string {
-  // Anda bisa menyesuaikan teks ini dengan data invoice Anda
   return `Halo, berikut adalah invoice untuk tagihan Anda. Terima kasih telah menggunakan layanan kami.`;
 }
 
 // 2. Fungsi untuk membuat URL WhatsApp Web langsung (Fallback)
 export function buildDirectWhatsAppUrl(phone: string, text: string): string {
-  // Membersihkan nomor HP
   let cleaned = phone.replace(/\D/g, '');
   if (cleaned.startsWith('0')) cleaned = '62' + cleaned.slice(1);
   return `https://wa.me/${cleaned}?text=${encodeURIComponent(text)}`;
@@ -30,11 +28,11 @@ export async function sendInvoicePdfViaOpenWa(
   base64Pdf: string,
   filename: string
 ): Promise<{ success: boolean; message: string; data?: any }> {
-  // Validasi konfigurasi
+  // Validasi konfigurasi (Tidak ada hardcode di sini)
   if (!config.serverUrl || !config.apiKey || !config.sessionId) {
     return { 
       success: false, 
-      message: 'Konfigurasi OpenWA belum lengkap. Silakan isi Server URL, API Key, dan Session ID di menu Pengaturan.' 
+      message: 'Konfigurasi OpenWA belum lengkap. Silakan isi Server URL, API Key, dan Session ID (UUID) di menu Pengaturan.' 
     };
   }
   if (!chatId) {
@@ -45,11 +43,14 @@ export async function sendInvoicePdfViaOpenWa(
     const baseUrl = config.serverUrl.replace(/\/$/, ''); 
     const endpoint = `${baseUrl}/api/sessions/${config.sessionId}/messages/send-document`;
 
+    // PENTING: Bersihkan prefix Base64 jika ada (misal: "data:application/pdf;base64,")
+    const cleanBase64 = base64Pdf.includes(',') ? base64Pdf.split(',')[1] : base64Pdf;
+
     const body = {
       chatId: chatId,
       filename: filename,
       mimetype: 'application/pdf',
-      base64: base64Pdf,
+      base64: cleanBase64,
     };
 
     const response = await fetch(endpoint, {
@@ -78,10 +79,10 @@ export async function sendInvoicePdfViaOpenWa(
 export async function testOpenWaConnection(
   serverUrl: string,
   apiKey: string,
-  sessionId: string = 'a971a004-a7b0-4a74-b810-cb7afe9d6ed0' 
+  sessionId: string // Tidak ada nilai default hardcode, wajib diisi dari form
 ): Promise<{ success: boolean; message: string }> {
-  if (!serverUrl || !apiKey) {
-    return { success: false, message: 'Server URL dan API Key tidak boleh kosong.' };
+  if (!serverUrl || !apiKey || !sessionId) {
+    return { success: false, message: 'Server URL, API Key, dan Session ID (UUID) wajib diisi.' };
   }
 
   try {
@@ -94,15 +95,20 @@ export async function testOpenWaConnection(
     });
 
     if (!response.ok) {
-      return { success: false, message: 'Gagal terhubung. Periksa URL dan API Key.' };
+      return { success: false, message: 'Gagal terhubung. Periksa URL, API Key, dan UUID Anda.' };
     }
 
     const data = await response.json();
-    
-    if (data && data.status === 'connected') {
-      return { success: true, message: 'Terhubung ke OpenWA (Sesi Aktif)' };
+    const statusSesi = data?.status?.toLowerCase();
+
+    // Perbaikan: Menerima status 'ready' (standar OpenWA) dan 'connected'
+    if (statusSesi === 'connected' || statusSesi === 'ready') {
+      return { success: true, message: 'Terhubung ke OpenWA (Sesi Siap)' };
     } else {
-      return { success: false, message: `Server merespons, tapi sesi berstatus: ${data?.status || 'unknown'}. Scan QR dulu.` };
+      return { 
+        success: false, 
+        message: `Server merespons, tapi sesi berstatus: ${data?.status || 'unknown'}. Pastikan WhatsApp sudah tertaut dan scan QR jika perlu.` 
+      };
     }
   } catch (error: any) {
     return { success: false, message: error.message || 'Gagal terhubung ke server OpenWA' };
