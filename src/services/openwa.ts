@@ -78,7 +78,7 @@ export async function sendInvoicePdfViaOpenWa(
 export async function testOpenWaConnection(
   serverUrl: string,
   apiKey: string,
-  sessionId: string = 'chatbot1' 
+  sessionId: string = 'a971a004-a7b0-4a74-b810-cb7afe9d6ed0' 
 ): Promise<{ success: boolean; message: string }> {
   if (!serverUrl || !apiKey) {
     return { success: false, message: 'Server URL dan API Key tidak boleh kosong.' };
