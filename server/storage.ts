@@ -34,6 +34,10 @@ export async function uploadImage(
       config.supabase.url &&
       config.supabase.anonKey
     ) {
+      console.log(
+        `⏳ [Storage] Mencoba upload "${filename}" ke Supabase Storage...`,
+      );
+
       const bucketName =
         process.env.SUPABASE_STORAGE_BUCKET || "smartinvoice-assets";
       const supabase = createClient(
@@ -48,24 +52,36 @@ export async function uploadImage(
           upsert: true,
         });
 
-      if (error) throw error;
+      if (error) {
+        console.error("❌ [Storage] Gagal upload ke Supabase:", error.message);
+        throw error;
+      }
 
       // Ambil URL Publik
       const { data: publicUrlData } = supabase.storage
         .from(bucketName)
         .getPublicUrl(`public/${filename}`);
 
+      console.log(
+        "✅ [Storage] Berhasil upload ke Supabase:",
+        publicUrlData.publicUrl,
+      );
       return { success: true, url: publicUrlData.publicUrl };
     }
 
     // ── OPSI 2: LOCAL DISK (Docker / Self-Hosted) ──
+    console.log(
+      `⚠️ [Storage] Supabase tidak aktif. Menyimpan "${filename}" ke disk lokal...`,
+    );
+
     const filePath = path.join(UPLOADS_DIR, filename);
     fs.writeFileSync(filePath, buffer);
 
     // Kembalikan URL relatif yang bisa diakses via static route di Express/Bun
+    console.log(`✅ [Storage] Berhasil simpan ke lokal: /uploads/${filename}`);
     return { success: true, url: `/uploads/${filename}` };
   } catch (err: any) {
-    console.error("[storage] Upload error:", err.message);
+    console.error("❌ [Storage] Terjadi kesalahan sistem:", err.message);
     return { success: false, message: err.message };
   }
 }

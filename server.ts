@@ -3,6 +3,7 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
+import { createClient } from "@supabase/supabase-js";
 import {
   testConnection,
   migrateDataBetweenDrivers,
@@ -15,7 +16,6 @@ import {
 
 import { getDatabaseConfig, saveDatabaseConfig } from "./server/config.ts";
 
-// Import fungsi upload dari storage.ts
 import { uploadImage } from "./server/storage.ts";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -25,13 +25,13 @@ async function startServer() {
   const app = express();
   const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
-  // Local uploads directory (untuk fallback jika tidak pakai Supabase)
+  // Pastikan folder uploads ada di lokal
   const UPLOADS_DIR = path.resolve(process.cwd(), "data", "uploads");
   if (!fs.existsSync(UPLOADS_DIR)) {
     fs.mkdirSync(UPLOADS_DIR, { recursive: true });
   }
 
-  // Serve static uploaded files (hanya aktif jika menggunakan local disk)
+  // Serve static uploaded files (jika menggunakan local disk)
   app.use("/uploads", express.static(UPLOADS_DIR));
 
   // Increase payload limit to handle base64 PDFs & images
@@ -39,19 +39,21 @@ async function startServer() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
   // ==========================================
-  // IMAGE UPLOAD ENDPOINT (Supabase & Local)
+  // IMAGE UPLOAD & DELETE ENDPOINTS
   // ==========================================
   app.post("/api/upload", async (req, res) => {
     try {
       const { image, filename } = req.body;
       if (!image) {
-        return res.status(400).json({
-          success: false,
-          message: "Tidak ada data gambar yang dikirim.",
-        });
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message: "Tidak ada data gambar yang dikirim.",
+          });
       }
 
-      // Panggil fungsi abstraksi storage (akan otomatis memilih Supabase atau Local)
+      // Panggil abstraksi storage (Supabase / Lokal)
       const result = await uploadImage(image, filename || "upload.png");
 
       if (result.success) {
@@ -79,19 +81,37 @@ async function startServer() {
       const { fileUrl } = req.body;
       if (!fileUrl) return res.json({ success: true });
 
-      // Jika file disimpan di lokal (berawalan /uploads/)
+      // 1. Hapus File Lokal
       if (fileUrl.startsWith("/uploads/")) {
         const filename = fileUrl.replace("/uploads/", "");
         const filePath = path.join(UPLOADS_DIR, filename);
-
         if (fs.existsSync(filePath)) {
           fs.unlinkSync(filePath);
           return res.json({ success: true, message: "File lokal dihapus" });
         }
       }
 
-      // Jika di Supabase, kita bisa menambahkan logika hapus dari bucket di sini nanti
-      return res.json({ success: true, message: "File dihapus" });
+      // 2. Hapus File di Supabase
+      if (fileUrl.includes("supabase.co")) {
+        const config = getDatabaseConfig();
+        if (config.supabase.url && config.supabase.anonKey) {
+          const supabase = createClient(
+            config.supabase.url,
+            config.supabase.anonKey,
+          );
+          const parts = fileUrl.split("/");
+          const filename = parts[parts.length - 1];
+          const bucketName =
+            process.env.SUPABASE_STORAGE_BUCKET || "smartinvoice-assets";
+
+          await supabase.storage
+            .from(bucketName)
+            .remove([`public/${filename}`]);
+          return res.json({ success: true, message: "File Supabase dihapus" });
+        }
+      }
+
+      return res.json({ success: true });
     } catch (err: any) {
       return res.status(500).json({ success: false, message: err.message });
     }
@@ -105,14 +125,9 @@ async function startServer() {
   app.get("/api/db/config", (req, res) => {
     try {
       const config = getDatabaseConfig();
-      // Cek apakah Supabase URL diisi lewat Environment Variable
       const isEnvLocked = Boolean(process.env.SUPABASE_URL);
 
-      res.json({
-        success: true,
-        config,
-        isEnvLocked,
-      });
+      res.json({ success: true, config, isEnvLocked });
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
     }
@@ -308,23 +323,27 @@ async function startServer() {
       customEndpointPath,
       chatId,
       phone,
-      file, // Base64 data URI or url
+      file,
       filename,
       caption,
     } = req.body;
 
     if (!serverUrl) {
-      return res.status(400).json({
-        success: false,
-        message: "Server URL OpenWA belum ditentukan",
-      });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "Server URL OpenWA belum ditentukan",
+        });
     }
 
     if (!chatId && !phone) {
-      return res.status(400).json({
-        success: false,
-        message: "Nomor WhatsApp penerima belum diisi",
-      });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "Nomor WhatsApp penerima belum diisi",
+        });
     }
 
     const cleanUrl = serverUrl.replace(/\/+$/, "");
@@ -504,10 +523,12 @@ async function startServer() {
         .json({ success: false, message: "Token Fonnte wajib diisi." });
     }
     if (!target) {
-      return res.status(400).json({
-        success: false,
-        message: "Nomor WhatsApp penerima wajib diisi.",
-      });
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "Nomor WhatsApp penerima wajib diisi.",
+        });
     }
 
     let cleanTarget = target.replace(/\D/g, "");

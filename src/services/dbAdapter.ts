@@ -3,7 +3,7 @@ import {
   DatabaseConfig,
   DatabaseDriver,
   Invoice,
-  WhatsAppConfig, // <-- Diperbaiki dari OpenWaConfig
+  WhatsAppConfig,
   StoreApiConfig,
 } from "../types/invoice";
 import {
@@ -30,6 +30,12 @@ export const defaultDatabaseConfig: DatabaseConfig = {
   },
 };
 
+// Interface untuk respons konfigurasi (menambahkan isEnvLocked)
+export interface DbConfigResponse {
+  config: DatabaseConfig;
+  isEnvLocked: boolean;
+}
+
 // In-memory cache for ultra-fast UI rendering
 let cachedDbConfig: DatabaseConfig = defaultDatabaseConfig;
 
@@ -37,20 +43,26 @@ let cachedDbConfig: DatabaseConfig = defaultDatabaseConfig;
 // CONFIGURATION & DRIVER MANAGEMENT
 // ==========================================
 
-export async function fetchDatabaseConfig(): Promise<DatabaseConfig> {
+export async function fetchDatabaseConfig(): Promise<DbConfigResponse> {
   try {
     const res = await fetch("/api/db/config");
     if (res.ok) {
       const data = await res.json();
       if (data.success && data.config) {
         cachedDbConfig = data.config;
-        return data.config;
+        return {
+          config: data.config,
+          isEnvLocked: data.isEnvLocked || false, // <-- Mengembalikan status lock
+        };
       }
     }
   } catch (e) {
     console.warn("Failed to fetch db config from server, using cached", e);
   }
-  return cachedDbConfig;
+  return {
+    config: cachedDbConfig,
+    isEnvLocked: false,
+  };
 }
 
 export function getCachedDatabaseConfig(): DatabaseConfig {
@@ -224,12 +236,10 @@ export async function saveBusinessProfile(
 }
 
 export async function fetchOpenWaConfig(): Promise<WhatsAppConfig> {
-  // <-- Tipe diperbaiki
   return fetchSetting<WhatsAppConfig>("openwa_config", defaultOpenWaConfig);
 }
 
 export async function saveOpenWaConfig(config: WhatsAppConfig): Promise<void> {
-  // <-- Tipe diperbaiki
   return saveSettingRecord<WhatsAppConfig>("openwa_config", config);
 }
 
@@ -278,8 +288,8 @@ CREATE TABLE IF NOT EXISTS invoices (
     payment_instructions TEXT,
     paid_at TIMESTAMPTZ,
     paid_method TEXT,
-    payment_method TEXT,          -- <-- KOLOM BARU
-    payment_account_number TEXT,  -- <-- KOLOM BARU
+    payment_method TEXT,
+    payment_account_number TEXT,
     whatsapp_status TEXT DEFAULT 'not_sent',
     whatsapp_sent_at TIMESTAMPTZ,
     whatsapp_recipient TEXT,

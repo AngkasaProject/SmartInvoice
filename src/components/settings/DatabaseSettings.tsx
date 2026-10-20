@@ -23,7 +23,6 @@ import {
   Eye,
   EyeOff,
   Lock,
-  AlertCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -37,7 +36,7 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
   const [dbSettings, setDbSettings] = useState<DatabaseConfig>(
     defaultDatabaseConfig,
   );
-  const [isEnvLocked, setIsEnvLocked] = useState(false); // <-- State Baru
+  const [isEnvLocked, setIsEnvLocked] = useState(false);
   const [showMariaPassword, setShowMariaPassword] = useState(false);
   const [showSupabaseKey, setShowSupabaseKey] = useState(false);
 
@@ -62,16 +61,10 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
   const [copiedSql, setCopiedSql] = useState(false);
 
   useEffect(() => {
-    // Kita panggil langsung fetch agar bisa membaca isEnvLocked
-    fetch("/api/db/config")
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success) {
-          setDbSettings(data.config);
-          setIsEnvLocked(data.isEnvLocked || false);
-        }
-      })
-      .catch((err) => console.error("Gagal load config", err));
+    fetchDatabaseConfig().then((res) => {
+      setDbSettings(res.config);
+      setIsEnvLocked(res.isEnvLocked);
+    });
   }, []);
 
   const handleSave = async (e: React.FormEvent) => {

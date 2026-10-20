@@ -18,7 +18,7 @@ const DATA_DIR = path.resolve(process.cwd(), "data");
 const CONFIG_PATH = path.join(DATA_DIR, "server-config.json");
 
 export function getDatabaseConfig(): DatabaseConfig {
-  // 1. PRIORITAS 1: Environment Variables (Untuk Docker & Cloudflare)
+  // 1. PRIORITAS UTAMA: Environment Variables (Docker / Cloudflare)
   if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
     return {
       activeDriver: "supabase",
@@ -31,7 +31,7 @@ export function getDatabaseConfig(): DatabaseConfig {
     };
   }
 
-  // 2. PRIORITAS 2: File JSON (Untuk Self-Hosted via UI)
+  // 2. PRIORITAS KEDUA: File JSON Lokal (Jika tidak ada env)
   try {
     if (fs.existsSync(CONFIG_PATH)) {
       const raw = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
@@ -48,12 +48,10 @@ export function getDatabaseConfig(): DatabaseConfig {
       };
     }
   } catch (e) {
-    console.warn(
-      "[config] Gagal membaca server-config.json, fallback ke SQLite.",
-    );
+    console.warn("[config] Gagal membaca config lokal.");
   }
 
-  // 3. DEFAULT FALLBACK
+  // 3. DEFAULT (SQLite)
   return {
     activeDriver: "sqlite",
     sqlite: { filePath: "./data/smartinvoice.db" },
@@ -70,10 +68,10 @@ export function getDatabaseConfig(): DatabaseConfig {
 export function saveDatabaseConfig(
   config: Partial<DatabaseConfig>,
 ): DatabaseConfig {
-  // Jangan simpan ke file jika berjalan di Cloud (Env terisi)
+  // Jika di Cloud/Env mode, jangan simpan ke file (karena tidak permanen)
   if (process.env.SUPABASE_URL) {
     console.warn(
-      "[config] Berjalan di mode Environment Variable. Perubahan config diabaikan.",
+      "[config] Mode Environment Variable aktif. Perubahan config diabaikan.",
     );
     return getDatabaseConfig();
   }
@@ -83,6 +81,5 @@ export function saveDatabaseConfig(
 
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2), "utf-8");
-
   return merged;
 }
