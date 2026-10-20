@@ -51,30 +51,51 @@ export const BusinessSettings: React.FC<BusinessSettingsProps> = ({
           body: JSON.stringify({ image: base64Data, filename: file.name }),
         });
         const data = await res.json();
+
         if (res.ok && data.success && data.url) {
           if (type === "logo")
             setBizForm((prev) => ({ ...prev, logoUrl: data.url }));
           else setBizForm((prev) => ({ ...prev, qrisImageUrl: data.url }));
-          toast.success(
-            "Gambar berhasil disimpan di penyimpanan server lokal!",
-          );
+          toast.success("Gambar berhasil disimpan ke storage!");
         } else {
           if (type === "logo")
             setBizForm((prev) => ({ ...prev, logoUrl: base64Data }));
           else setBizForm((prev) => ({ ...prev, qrisImageUrl: base64Data }));
-          toast.info("Gambar disimpan dalam format data lokal.");
+          toast.info("Gambar disimpan dalam format data lokal (Base64).");
         }
       } catch {
         if (type === "logo")
           setBizForm((prev) => ({ ...prev, logoUrl: base64Data }));
         else setBizForm((prev) => ({ ...prev, qrisImageUrl: base64Data }));
-        toast.info("Gambar disimpan dalam format data lokal.");
+        toast.info("Gambar disimpan dalam format data lokal (Base64).");
       } finally {
         if (type === "logo") setIsUploadingLogo(false);
         else setIsUploadingQris(false);
       }
     };
     reader.readAsDataURL(file);
+  };
+
+  // FUNGSI BARU: Menghapus file fisik dan mengosongkan state
+  const handleDeleteImage = async (
+    url: string | undefined,
+    type: "logo" | "qris",
+  ) => {
+    if (url && (url.startsWith("/uploads/") || url.includes("supabase.co"))) {
+      try {
+        await fetch("/api/delete-file", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fileUrl: url }),
+        });
+      } catch (e) {
+        console.warn("Gagal hapus file fisik", e);
+      }
+    }
+
+    if (type === "logo") setBizForm({ ...bizForm, logoUrl: "" });
+    else setBizForm({ ...bizForm, qrisImageUrl: "" });
+    toast.success("Gambar berhasil dihapus.");
   };
 
   return (
@@ -220,6 +241,7 @@ export const BusinessSettings: React.FC<BusinessSettingsProps> = ({
           <ImageIcon className="w-4 h-4 text-blue-600" /> Gambar Logo & QRIS
         </h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* Logo Uploader */}
           <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
             <span className="text-xs font-bold text-slate-800 block">
               Logo Usaha
@@ -236,13 +258,14 @@ export const BusinessSettings: React.FC<BusinessSettingsProps> = ({
                   <ImageIcon className="w-5 h-5" />
                 </div>
               )}
+
               <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 transition">
                 {isUploadingLogo ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
                   <Upload className="w-3.5 h-3.5 text-slate-500" />
-                )}{" "}
-                Unggah Logo
+                )}
+                {isUploadingLogo ? "Mengunggah..." : "Unggah Logo"}
                 <input
                   type="file"
                   accept="image/*"
@@ -250,8 +273,21 @@ export const BusinessSettings: React.FC<BusinessSettingsProps> = ({
                   className="hidden"
                 />
               </label>
+
+              {/* TOMBOL HAPUS LOGO */}
+              {bizForm.logoUrl && (
+                <button
+                  type="button"
+                  onClick={() => handleDeleteImage(bizForm.logoUrl, "logo")}
+                  className="text-[11px] text-rose-600 hover:underline font-semibold"
+                >
+                  Hapus Logo
+                </button>
+              )}
             </div>
           </div>
+
+          {/* QRIS Uploader */}
           <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
             <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
               <QrCode className="w-4 h-4 text-slate-600" /> Gambar QRIS
@@ -268,13 +304,14 @@ export const BusinessSettings: React.FC<BusinessSettingsProps> = ({
                   <QrCode className="w-5 h-5" />
                 </div>
               )}
+
               <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 transition">
                 {isUploadingQris ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
                   <Upload className="w-3.5 h-3.5 text-slate-500" />
-                )}{" "}
-                Unggah QRIS
+                )}
+                {isUploadingQris ? "Mengunggah..." : "Unggah QRIS"}
                 <input
                   type="file"
                   accept="image/*"
@@ -282,6 +319,19 @@ export const BusinessSettings: React.FC<BusinessSettingsProps> = ({
                   className="hidden"
                 />
               </label>
+
+              {/* TOMBOL HAPUS QRIS */}
+              {bizForm.qrisImageUrl && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleDeleteImage(bizForm.qrisImageUrl, "qris")
+                  }
+                  className="text-[11px] text-rose-600 hover:underline font-semibold"
+                >
+                  Hapus QRIS
+                </button>
+              )}
             </div>
           </div>
         </div>

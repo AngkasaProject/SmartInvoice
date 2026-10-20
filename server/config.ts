@@ -1,0 +1,88 @@
+import fs from "fs";
+import path from "path";
+
+export interface DatabaseConfig {
+  activeDriver: "sqlite" | "mariadb" | "supabase";
+  sqlite: { filePath: string };
+  mariadb: {
+    host: string;
+    port: number;
+    user: string;
+    password?: string;
+    database: string;
+  };
+  supabase: { url: string; anonKey: string };
+}
+
+const DATA_DIR = path.resolve(process.cwd(), "data");
+const CONFIG_PATH = path.join(DATA_DIR, "server-config.json");
+
+export function getDatabaseConfig(): DatabaseConfig {
+  // 1. PRIORITAS 1: Environment Variables (Untuk Docker & Cloudflare)
+  if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
+    return {
+      activeDriver: "supabase",
+      sqlite: { filePath: "" },
+      mariadb: { host: "", port: 0, user: "", database: "" },
+      supabase: {
+        url: process.env.SUPABASE_URL,
+        anonKey: process.env.SUPABASE_ANON_KEY,
+      },
+    };
+  }
+
+  // 2. PRIORITAS 2: File JSON (Untuk Self-Hosted via UI)
+  try {
+    if (fs.existsSync(CONFIG_PATH)) {
+      const raw = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
+      return {
+        activeDriver: raw.activeDriver || "sqlite",
+        sqlite: raw.sqlite || { filePath: "./data/smartinvoice.db" },
+        mariadb: raw.mariadb || {
+          host: "localhost",
+          port: 3306,
+          user: "root",
+          database: "smartinvoice",
+        },
+        supabase: raw.supabase || { url: "", anonKey: "" },
+      };
+    }
+  } catch (e) {
+    console.warn(
+      "[config] Gagal membaca server-config.json, fallback ke SQLite.",
+    );
+  }
+
+  // 3. DEFAULT FALLBACK
+  return {
+    activeDriver: "sqlite",
+    sqlite: { filePath: "./data/smartinvoice.db" },
+    mariadb: {
+      host: "localhost",
+      port: 3306,
+      user: "root",
+      database: "smartinvoice",
+    },
+    supabase: { url: "", anonKey: "" },
+  };
+}
+
+export function saveDatabaseConfig(
+  config: Partial<DatabaseConfig>,
+): DatabaseConfig {
+  // Jangan simpan ke file jika berjalan di Cloud (Env terisi)
+  if (process.env.SUPABASE_URL) {
+    console.warn(
+      "[config] Berjalan di mode Environment Variable. Perubahan config diabaikan.",
+    );
+    return getDatabaseConfig();
+  }
+
+  const current = getDatabaseConfig();
+  const merged = { ...current, ...config };
+
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2), "utf-8");
+
+  return merged;
+}

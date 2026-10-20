@@ -22,6 +22,8 @@ import {
   FileCode,
   Eye,
   EyeOff,
+  Lock,
+  AlertCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -35,6 +37,7 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
   const [dbSettings, setDbSettings] = useState<DatabaseConfig>(
     defaultDatabaseConfig,
   );
+  const [isEnvLocked, setIsEnvLocked] = useState(false); // <-- State Baru
   const [showMariaPassword, setShowMariaPassword] = useState(false);
   const [showSupabaseKey, setShowSupabaseKey] = useState(false);
 
@@ -59,11 +62,23 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
   const [copiedSql, setCopiedSql] = useState(false);
 
   useEffect(() => {
-    fetchDatabaseConfig().then(setDbSettings);
+    // Kita panggil langsung fetch agar bisa membaca isEnvLocked
+    fetch("/api/db/config")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success) {
+          setDbSettings(data.config);
+          setIsEnvLocked(data.isEnvLocked || false);
+        }
+      })
+      .catch((err) => console.error("Gagal load config", err));
   }, []);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isEnvLocked)
+      return toast.error("Konfigurasi dikunci oleh Environment Variable.");
+
     const res = await saveDatabaseConfig(dbSettings);
     if (res.success) {
       toast.success(
@@ -103,6 +118,7 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
   };
 
   const handleMigrate = async () => {
+    if (isEnvLocked) return toast.error("Migrasi dinonaktifkan di mode Cloud.");
     if (migrateFrom === migrateTo)
       return toast.error("Sumber dan tujuan tidak boleh sama.");
     setIsMigrating(true);
@@ -118,6 +134,23 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
       onSubmit={handleSave}
       className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-6"
     >
+      {/* Banner Peringatan Jika Dikunci ENV */}
+      {isEnvLocked && (
+        <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl flex items-start gap-3">
+          <Lock className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+          <div>
+            <h3 className="text-sm font-bold text-blue-900">
+              Konfigurasi Dikelola oleh Environment Variable
+            </h3>
+            <p className="text-xs text-blue-700 mt-1">
+              Aplikasi mendeteksi <code>SUPABASE_URL</code> di sistem.
+              Pengaturan database dikunci secara otomatis dan tidak dapat diubah
+              melalui UI ini.
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between pb-3 border-b border-slate-100">
         <div>
           <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
@@ -127,18 +160,23 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
             Pilihan real working database server.
           </p>
         </div>
-        <button
-          type="submit"
-          className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 flex items-center gap-2"
-        >
-          <Save className="w-4 h-4" /> Simpan Database
-        </button>
+        {!isEnvLocked && (
+          <button
+            type="submit"
+            className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 flex items-center gap-2"
+          >
+            <Save className="w-4 h-4" /> Simpan Database
+          </button>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div
+        className={`grid grid-cols-1 sm:grid-cols-3 gap-4 ${isEnvLocked ? "opacity-50 pointer-events-none" : ""}`}
+      >
         {/* SQLite Card */}
         <div
           onClick={() =>
+            !isEnvLocked &&
             setDbSettings({ ...dbSettings, activeDriver: "sqlite" })
           }
           className={`cursor-pointer p-4 rounded-xl border-2 transition ${dbSettings.activeDriver === "sqlite" ? "border-emerald-600 bg-emerald-50/40" : "border-slate-200 bg-white"}`}
@@ -153,6 +191,7 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
         {/* MariaDB Card */}
         <div
           onClick={() =>
+            !isEnvLocked &&
             setDbSettings({ ...dbSettings, activeDriver: "mariadb" })
           }
           className={`cursor-pointer p-4 rounded-xl border-2 transition ${dbSettings.activeDriver === "mariadb" ? "border-amber-600 bg-amber-50/40" : "border-slate-200 bg-white"}`}
@@ -167,6 +206,7 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
         {/* Supabase Card */}
         <div
           onClick={() =>
+            !isEnvLocked &&
             setDbSettings({ ...dbSettings, activeDriver: "supabase" })
           }
           className={`cursor-pointer p-4 rounded-xl border-2 transition ${dbSettings.activeDriver === "supabase" ? "border-blue-600 bg-blue-50/40" : "border-slate-200 bg-white"}`}
@@ -180,7 +220,9 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
 
       {/* SQLite Form */}
       {dbSettings.activeDriver === "sqlite" && (
-        <div className="p-4 bg-emerald-50/50 rounded-xl border border-emerald-200 space-y-3">
+        <div
+          className={`p-4 bg-emerald-50/50 rounded-xl border border-emerald-200 space-y-3 ${isEnvLocked ? "opacity-50 pointer-events-none" : ""}`}
+        >
           <div>
             <label className="block text-[11px] font-semibold text-slate-700 mb-1">
               Lokasi File Database
@@ -223,7 +265,9 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
 
       {/* MariaDB Form */}
       {dbSettings.activeDriver === "mariadb" && (
-        <div className="p-4 bg-amber-50/50 rounded-xl border border-amber-200 space-y-3">
+        <div
+          className={`p-4 bg-amber-50/50 rounded-xl border border-amber-200 space-y-3 ${isEnvLocked ? "opacity-50 pointer-events-none" : ""}`}
+        >
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block text-[11px] font-semibold text-slate-700 mb-1">
@@ -354,7 +398,9 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
 
       {/* Supabase Form */}
       {dbSettings.activeDriver === "supabase" && (
-        <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
+        <div
+          className={`p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3 ${isEnvLocked ? "opacity-50 pointer-events-none" : ""}`}
+        >
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-[11px] font-semibold text-slate-700 mb-1">
@@ -429,56 +475,60 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
         </div>
       )}
 
-      {/* Migration Tool */}
-      <div className="p-5 bg-gradient-to-br from-indigo-50/50 to-blue-50/40 rounded-xl border border-indigo-100 space-y-4">
-        <h3 className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
-          <ArrowRightLeft className="w-4 h-4 text-indigo-600" /> Alat Migrasi
-          Database
-        </h3>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-              Dari:
-            </label>
-            <select
-              value={migrateFrom}
-              onChange={(e) => setMigrateFrom(e.target.value as DatabaseDriver)}
-              className="w-full text-xs p-2.5 rounded-lg border border-slate-200"
+      {/* Migration Tool (Disembunyikan di Cloud Mode) */}
+      {!isEnvLocked && (
+        <div className="p-5 bg-gradient-to-br from-indigo-50/50 to-blue-50/40 rounded-xl border border-indigo-100 space-y-4">
+          <h3 className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+            <ArrowRightLeft className="w-4 h-4 text-indigo-600" /> Alat Migrasi
+            Database
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                Dari:
+              </label>
+              <select
+                value={migrateFrom}
+                onChange={(e) =>
+                  setMigrateFrom(e.target.value as DatabaseDriver)
+                }
+                className="w-full text-xs p-2.5 rounded-lg border border-slate-200"
+              >
+                <option value="sqlite">SQLite</option>
+                <option value="mariadb">MariaDB</option>
+                <option value="supabase">Supabase</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                Ke:
+              </label>
+              <select
+                value={migrateTo}
+                onChange={(e) => setMigrateTo(e.target.value as DatabaseDriver)}
+                className="w-full text-xs p-2.5 rounded-lg border border-slate-200"
+              >
+                <option value="sqlite">SQLite</option>
+                <option value="mariadb">MariaDB</option>
+                <option value="supabase">Supabase</option>
+              </select>
+            </div>
+            <button
+              type="button"
+              onClick={handleMigrate}
+              disabled={isMigrating || migrateFrom === migrateTo}
+              className="w-full px-4 py-2.5 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 flex justify-center items-center gap-2"
             >
-              <option value="sqlite">SQLite</option>
-              <option value="mariadb">MariaDB</option>
-              <option value="supabase">Supabase</option>
-            </select>
+              {isMigrating ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <ArrowRightLeft className="w-4 h-4" />
+              )}{" "}
+              Migrasi Data
+            </button>
           </div>
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-              Ke:
-            </label>
-            <select
-              value={migrateTo}
-              onChange={(e) => setMigrateTo(e.target.value as DatabaseDriver)}
-              className="w-full text-xs p-2.5 rounded-lg border border-slate-200"
-            >
-              <option value="sqlite">SQLite</option>
-              <option value="mariadb">MariaDB</option>
-              <option value="supabase">Supabase</option>
-            </select>
-          </div>
-          <button
-            type="button"
-            onClick={handleMigrate}
-            disabled={isMigrating || migrateFrom === migrateTo}
-            className="w-full px-4 py-2.5 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 flex justify-center items-center gap-2"
-          >
-            {isMigrating ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <ArrowRightLeft className="w-4 h-4" />
-            )}{" "}
-            Migrasi Data
-          </button>
         </div>
-      </div>
+      )}
     </form>
   );
 };

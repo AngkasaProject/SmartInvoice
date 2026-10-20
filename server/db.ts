@@ -2,92 +2,23 @@
  * server/db.ts – Server-side database adapter for SmartInvoice
  *
  * Supports two modes:
- *   1. "local" / "sqlite"  → JSON files under ./data/ (fallback, always works)
- *   2. "supabase"          → Supabase Cloud via @supabase/supabase-js
+ *   1. "sqlite"  → JSON files under ./data/ (fallback, always works)
+ *   2. "supabase" → Supabase Cloud via @supabase/supabase-js
+ *
+ * Configuration is loaded centrally from server/config.ts
  */
 
 import fs from "fs";
 import path from "path";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { getDatabaseConfig, DatabaseConfig } from "./config";
 
 // ── Data directory ──────────────────────────────────────────────────
 const DATA_DIR = path.resolve(process.cwd(), "data");
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const CONFIG_PATH = path.join(DATA_DIR, "server-config.json");
 const INVOICES_PATH = path.join(DATA_DIR, "invoices.json");
 const SETTINGS_PATH = path.join(DATA_DIR, "settings.json");
-
-// ── Types (mirror client-side DatabaseConfig) ───────────────────────
-export interface DatabaseConfig {
-  activeDriver: "sqlite" | "mariadb" | "supabase";
-  sqlite: { filePath: string };
-  mariadb: {
-    host: string;
-    port: number;
-    user: string;
-    password?: string;
-    database: string;
-  };
-  supabase: {
-    url: string;
-    anonKey: string;
-  };
-  // Legacy fields that may exist in old config files
-  driver?: string;
-  credentials?: any;
-}
-
-const DEFAULT_CONFIG: DatabaseConfig = {
-  activeDriver: "sqlite",
-  sqlite: { filePath: "./data/smartinvoice.db" },
-  mariadb: {
-    host: "localhost",
-    port: 3306,
-    user: "root",
-    password: "",
-    database: "smartinvoice",
-  },
-  supabase: { url: "", anonKey: "" },
-};
-
-// ══════════════════════════════════════════════════════════════════════
-// CONFIG persistence
-// ══════════════════════════════════════════════════════════════════════
-
-export function loadServerDbConfig(): DatabaseConfig {
-  try {
-    if (fs.existsSync(CONFIG_PATH)) {
-      const raw = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
-      return { ...DEFAULT_CONFIG, ...raw };
-    }
-  } catch (e) {
-    console.warn("[db] Failed to read server config:", e);
-  }
-  return { ...DEFAULT_CONFIG };
-}
-
-export function saveServerDbConfig(
-  cfg: Partial<DatabaseConfig>,
-): DatabaseConfig {
-  const current = loadServerDbConfig();
-  const merged: DatabaseConfig = { ...current, ...cfg };
-
-  if (cfg.sqlite) merged.sqlite = { ...current.sqlite, ...cfg.sqlite };
-  if (cfg.mariadb) merged.mariadb = { ...current.mariadb, ...cfg.mariadb };
-  if (cfg.supabase) merged.supabase = { ...current.supabase, ...cfg.supabase };
-
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2), "utf-8");
-  _supabaseClient = null;
-
-  console.log(`[db] Config saved. Active driver: ${merged.activeDriver}`);
-  return merged;
-}
-
-function getActiveDriver(): string {
-  const cfg = loadServerDbConfig();
-  return cfg.activeDriver || (cfg as any).driver || "sqlite";
-}
 
 // ══════════════════════════════════════════════════════════════════════
 // Supabase client (lazy-initialized)
@@ -97,7 +28,7 @@ let _supabaseClient: SupabaseClient | null = null;
 function getSupabase(): SupabaseClient {
   if (_supabaseClient) return _supabaseClient;
 
-  const cfg = loadServerDbConfig();
+  const cfg = getDatabaseConfig();
   const url = cfg.supabase?.url;
   const key = cfg.supabase?.anonKey;
 
@@ -108,20 +39,17 @@ function getSupabase(): SupabaseClient {
   }
 
   _supabaseClient = createClient(url, key);
+  console.log(`[db] Supabase client created for ${url}`);
   return _supabaseClient;
 }
 
 function isSupabaseActive(): boolean {
-  try {
-    const cfg = loadServerDbConfig();
-    return (
-      cfg.activeDriver === "supabase" &&
-      Boolean(cfg.supabase?.url) &&
-      Boolean(cfg.supabase?.anonKey)
-    );
-  } catch {
-    return false;
-  }
+  const cfg = getDatabaseConfig();
+  return (
+    cfg.activeDriver === "supabase" &&
+    Boolean(cfg.supabase?.url) &&
+    Boolean(cfg.supabase?.anonKey)
+  );
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -168,6 +96,7 @@ export async function getAllInvoices(): Promise<any[]> {
       throw err;
     }
   }
+  // Fallback: local JSON
   return readJsonArray(INVOICES_PATH);
 }
 
@@ -185,6 +114,7 @@ export async function saveInvoice(invoice: any): Promise<void> {
       throw err;
     }
   }
+  // Fallback: local JSON
   const arr = readJsonArray(INVOICES_PATH);
   const idx = arr.findIndex((i: any) => i.id === invoice.id);
   if (idx >= 0) {
@@ -209,6 +139,7 @@ export async function deleteInvoice(id: string): Promise<void> {
       throw err;
     }
   }
+  // Fallback: local JSON
   const arr = readJsonArray(INVOICES_PATH);
   writeJsonArray(
     INVOICES_PATH,
@@ -238,6 +169,7 @@ export async function getSetting(
       throw err;
     }
   }
+  // Fallback: local JSON
   const map = readJsonObject(SETTINGS_PATH);
   return key in map ? map[key] : defaultValue;
 }
@@ -258,13 +190,14 @@ export async function saveSetting(key: string, value: any): Promise<void> {
       throw err;
     }
   }
+  // Fallback: local JSON
   const map = readJsonObject(SETTINGS_PATH);
   map[key] = value;
   fs.writeFileSync(SETTINGS_PATH, JSON.stringify(map, null, 2), "utf-8");
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// TEST CONNECTION
+// TEST CONNECTION & MIGRATION
 // ══════════════════════════════════════════════════════════════════════
 
 export async function testConnection(
@@ -274,8 +207,9 @@ export async function testConnection(
   const start = Date.now();
 
   if (driver === "supabase") {
-    const url = credentials?.url;
-    const key = credentials?.anonKey;
+    const url = credentials?.url || getDatabaseConfig().supabase.url;
+    const key = credentials?.anonKey || getDatabaseConfig().supabase.anonKey;
+
     if (!url || !key) {
       return {
         success: false,
@@ -286,6 +220,7 @@ export async function testConnection(
       const client = createClient(url, key);
       const { error } = await client.from("settings").select("key").limit(1);
       const latencyMs = Date.now() - start;
+
       if (error) {
         if (error.code === "42P01") {
           return {
@@ -328,10 +263,6 @@ export async function testConnection(
   };
 }
 
-// ══════════════════════════════════════════════════════════════════════
-// MIGRATE between drivers
-// ══════════════════════════════════════════════════════════════════════
-
 export async function migrateDataBetweenDrivers(
   fromDriver: string,
   toDriver: string,
@@ -367,15 +298,10 @@ export async function migrateDataBetweenDrivers(
           );
         count++;
       }
-
-      const cfg = loadServerDbConfig();
-      cfg.activeDriver = "supabase";
-      saveServerDbConfig(cfg);
-
       return {
         success: true,
         count,
-        message: `Berhasil migrasi ${count} item dari Lokal ke Supabase. Driver aktif diubah ke Supabase.`,
+        message: `Berhasil migrasi ${count} item ke Supabase.`,
       };
     }
 
@@ -398,15 +324,10 @@ export async function migrateDataBetweenDrivers(
         }
         fs.writeFileSync(SETTINGS_PATH, JSON.stringify(map, null, 2), "utf-8");
       }
-
-      const cfg = loadServerDbConfig();
-      cfg.activeDriver = "sqlite";
-      saveServerDbConfig(cfg);
-
       return {
         success: true,
         count,
-        message: `Berhasil migrasi ${count} item dari Supabase ke Lokal. Driver aktif diubah ke SQLite.`,
+        message: `Berhasil migrasi ${count} item ke Lokal.`,
       };
     }
 
@@ -428,9 +349,6 @@ export async function migrateDataBetweenDrivers(
 // MAPPING helpers (app ↔ Supabase row)
 // ══════════════════════════════════════════════════════════════════════
 
-/**
- * Map the app's Invoice object to a flat Supabase row.
- */
 function mapAppInvoiceToSupabase(inv: any): Record<string, any> {
   return {
     id: inv.id,
@@ -451,12 +369,8 @@ function mapAppInvoiceToSupabase(inv: any): Record<string, any> {
     notes: inv.notes || null,
     terms: inv.terms || null,
     payment_instructions: inv.paymentInstructions || null,
-
-    // ── PERBAIKAN: Tambahkan 2 field ini agar tersimpan ke DB ──
     payment_method: inv.paymentMethod || null,
     payment_account_number: inv.paymentAccountNumber || null,
-    // ───────────────────────────────────────────────────────────
-
     paid_at: inv.paidAt || null,
     paid_method: inv.paidMethod || null,
     whatsapp_status: inv.whatsappStatus || "not_sent",
@@ -468,9 +382,6 @@ function mapAppInvoiceToSupabase(inv: any): Record<string, any> {
   };
 }
 
-/**
- * Map a Supabase row back to the app's Invoice shape (camelCase).
- */
 function mapSupabaseInvoiceToApp(row: any): any {
   return {
     id: row.id,
@@ -491,12 +402,8 @@ function mapSupabaseInvoiceToApp(row: any): any {
     notes: row.notes,
     terms: row.terms,
     paymentInstructions: row.payment_instructions,
-
-    // ── PERBAIKAN: Ambil 2 field ini dari DB ke Frontend ──
     paymentMethod: row.payment_method,
     paymentAccountNumber: row.payment_account_number,
-    // ─────────────────────────────────────────────────────
-
     paidAt: row.paid_at,
     paidMethod: row.paid_method,
     whatsappStatus: row.whatsapp_status,
