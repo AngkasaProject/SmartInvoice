@@ -1,5 +1,23 @@
-export type InvoiceStatus = 'draft' | 'unpaid' | 'paid' | 'overdue' | 'cancelled';
+export type InvoiceStatus =
+  | "draft"
+  | "unpaid"
+  | "paid"
+  | "overdue"
+  | "cancelled";
 
+// ==========================================
+// 1. VARIAN PRODUK
+// ==========================================
+export interface InvoiceItemVariant {
+  id: string;
+  name: string; // cth: "Ukuran L", "Warna Merah"
+  quantity: number; // cth: 2
+  price: number; // Harga per varian
+}
+
+// ==========================================
+// 2. ITEM PRODUK (Dengan Varian)
+// ==========================================
 export interface InvoiceItem {
   id: string;
   name: string;
@@ -9,8 +27,12 @@ export interface InvoiceItem {
   unitPrice: number;
   discountPercent?: number;
   amount: number;
+  variants?: InvoiceItemVariant[]; // <-- Fitur Varian
 }
 
+// ==========================================
+// 3. INFO PELANGGAN
+// ==========================================
 export interface ClientInfo {
   name: string;
   company?: string;
@@ -20,6 +42,19 @@ export interface ClientInfo {
   npwp?: string;
 }
 
+// ==========================================
+// 4. REKENING BANK (Bisa Banyak)
+// ==========================================
+export interface BankAccount {
+  id: string;
+  bankName: string;
+  accountNumber: string;
+  accountHolder: string;
+}
+
+// ==========================================
+// 5. PROFIL USAHA (Menggunakan Array BankAccount)
+// ==========================================
 export interface BusinessProfile {
   id: string;
   businessName: string;
@@ -33,16 +68,11 @@ export interface BusinessProfile {
   postalCode?: string;
   website?: string;
   taxId?: string; // NPWP / NIB
-  // Bank transfer info
-  bankName: string; // e.g. "BCA", "Mandiri", "BRI"
-  bankAccountNumber: string;
-  bankAccountHolder: string;
-  secondaryBank?: {
-    bankName: string;
-    bankAccountNumber: string;
-    bankAccountHolder: string;
-  };
+
+  // FITUR BARU: Daftar Rekening (Bisa lebih dari 1)
+  bankAccounts: BankAccount[];
   qrisImageUrl?: string;
+
   // Defaults
   invoicePrefix: string; // e.g. "INV"
   defaultTaxRate: number; // e.g. 11 (%)
@@ -51,33 +81,42 @@ export interface BusinessProfile {
   currencySymbol: string;
 }
 
-export type WhatsAppProvider = 'openwa' | 'fonnte';
+// ==========================================
+// 6. KONFIGURASI WHATSAPP (OpenWA / Fonnte)
+// ==========================================
+export type WhatsAppProvider = "openwa" | "fonnte";
 
 export interface WhatsAppConfig {
   provider: WhatsAppProvider; // 'openwa' | 'fonnte'
-  // OpenWA settings (compatible with rmyndharis/OpenWA)
+  // OpenWA settings
   serverUrl: string; // e.g. http://localhost:8080
   apiKey: string;
   sessionName: string; // UUID session
-  // Fonnte settings (https://fonnte.com)
+  // Fonnte settings
   fonnteToken: string;
   // General sending options
-  endpointType: 'sendPdf' | 'sendFile' | 'sendMessageWithMedia' | 'custom';
+  endpointType: "sendPdf" | "sendFile" | "sendMessageWithMedia" | "custom";
   customEndpointPath: string;
   autoSendCaption: string;
   directWhatsappFallback: boolean;
 }
 
-// Kept for backwards compatibility across existing components
+// Backward compatibility
 export type OpenWaConfig = WhatsAppConfig;
 
+// ==========================================
+// 7. KONFIGURASI API TOKO
+// ==========================================
 export interface StoreApiConfig {
   webhookSecret: string;
   autoSendWhatsAppOnOrder: boolean;
-  defaultOrderStatus: 'unpaid' | 'paid';
+  defaultOrderStatus: "unpaid" | "paid";
   invoicePrefix: string;
 }
 
+// ==========================================
+// 8. INVOICE UTAMA (Dengan Metode Pembayaran)
+// ==========================================
 export interface Invoice {
   id: string;
   invoiceNumber: string;
@@ -87,7 +126,7 @@ export interface Invoice {
   client: ClientInfo;
   items: InvoiceItem[];
   subtotal: number;
-  discountType: 'percentage' | 'fixed';
+  discountType: "percentage" | "fixed";
   discountValue: number;
   discountAmount: number;
   taxRate: number; // in %
@@ -99,8 +138,13 @@ export interface Invoice {
   paymentInstructions?: string;
   paidAt?: string;
   paidMethod?: string;
+
+  // FITUR BARU: Metode Pembayaran yang dipilih
+  paymentMethod?: string;
+  paymentAccountNumber?: string;
+
   // WhatsApp dispatch record
-  whatsappStatus?: 'not_sent' | 'sent' | 'failed';
+  whatsappStatus?: "not_sent" | "sent" | "failed";
   whatsappSentAt?: string;
   whatsappRecipient?: string;
   whatsappLastLog?: string;
@@ -108,6 +152,9 @@ export interface Invoice {
   updatedAt: string;
 }
 
+// ==========================================
+// 9. STATISTIK DASHBOARD
+// ==========================================
 export interface DashboardStats {
   totalRevenue: number;
   totalPaid: number;
@@ -119,7 +166,10 @@ export interface DashboardStats {
   countDraft: number;
 }
 
-export type DatabaseDriver = 'sqlite' | 'mariadb' | 'supabase';
+// ==========================================
+// 10. KONFIGURASI DATABASE
+// ==========================================
+export type DatabaseDriver = "sqlite" | "mariadb" | "supabase";
 
 export interface MariaDbCredentials {
   host: string;

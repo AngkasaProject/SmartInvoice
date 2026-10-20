@@ -3,30 +3,30 @@ import {
   DatabaseConfig,
   DatabaseDriver,
   Invoice,
-  OpenWaConfig,
+  WhatsAppConfig, // <-- Diperbaiki dari OpenWaConfig
   StoreApiConfig,
-} from '../types/invoice';
+} from "../types/invoice";
 import {
   defaultBusinessProfile,
   defaultOpenWaConfig,
   defaultStoreApiConfig,
-} from './storage';
+} from "./storage";
 
 export const defaultDatabaseConfig: DatabaseConfig = {
-  activeDriver: 'sqlite',
+  activeDriver: "sqlite",
   sqlite: {
-    filePath: './data/smartinvoice.db',
+    filePath: "./data/smartinvoice.db",
   },
   mariadb: {
-    host: 'localhost',
+    host: "localhost",
     port: 3306,
-    user: 'root',
-    password: '',
-    database: 'smartinvoice',
+    user: "root",
+    password: "",
+    database: "smartinvoice",
   },
   supabase: {
-    url: (import.meta as any).env?.VITE_SUPABASE_URL || '',
-    anonKey: (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || '',
+    url: (import.meta as any).env?.VITE_SUPABASE_URL || "",
+    anonKey: (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || "",
   },
 };
 
@@ -39,7 +39,7 @@ let cachedDbConfig: DatabaseConfig = defaultDatabaseConfig;
 
 export async function fetchDatabaseConfig(): Promise<DatabaseConfig> {
   try {
-    const res = await fetch('/api/db/config');
+    const res = await fetch("/api/db/config");
     if (res.ok) {
       const data = await res.json();
       if (data.success && data.config) {
@@ -48,7 +48,7 @@ export async function fetchDatabaseConfig(): Promise<DatabaseConfig> {
       }
     }
   } catch (e) {
-    console.warn('Failed to fetch db config from server, using cached', e);
+    console.warn("Failed to fetch db config from server, using cached", e);
   }
   return cachedDbConfig;
 }
@@ -58,12 +58,12 @@ export function getCachedDatabaseConfig(): DatabaseConfig {
 }
 
 export async function saveDatabaseConfig(
-  config: Partial<DatabaseConfig>
+  config: Partial<DatabaseConfig>,
 ): Promise<{ success: boolean; config: DatabaseConfig; message: string }> {
   try {
-    const res = await fetch('/api/db/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    const res = await fetch("/api/db/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(config),
     });
     const data = await res.json();
@@ -71,20 +71,28 @@ export async function saveDatabaseConfig(
       cachedDbConfig = data.config;
       return { success: true, config: data.config, message: data.message };
     }
-    return { success: false, config: cachedDbConfig, message: data.message || 'Gagal menyimpan konfigurasi' };
+    return {
+      success: false,
+      config: cachedDbConfig,
+      message: data.message || "Gagal menyimpan konfigurasi",
+    };
   } catch (err: any) {
-    return { success: false, config: cachedDbConfig, message: err.message || 'Gagal menghubungi server' };
+    return {
+      success: false,
+      config: cachedDbConfig,
+      message: err.message || "Gagal menghubungi server",
+    };
   }
 }
 
 export async function testDatabaseConnection(
   driver: DatabaseDriver,
-  credentials?: any
+  credentials?: any,
 ): Promise<{ success: boolean; message: string; latencyMs?: number }> {
   try {
-    const res = await fetch('/api/db/test', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    const res = await fetch("/api/db/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ driver, credentials }),
     });
     const data = await res.json();
@@ -99,12 +107,12 @@ export async function testDatabaseConnection(
 
 export async function migrateDatabase(
   fromDriver: DatabaseDriver,
-  toDriver: DatabaseDriver
+  toDriver: DatabaseDriver,
 ): Promise<{ success: boolean; count: number; message: string }> {
   try {
-    const res = await fetch('/api/db/migrate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    const res = await fetch("/api/db/migrate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ fromDriver, toDriver }),
     });
     const data = await res.json();
@@ -127,7 +135,7 @@ export async function migrateDatabase(
 
 export async function fetchAllInvoices(): Promise<Invoice[]> {
   try {
-    const res = await fetch('/api/invoices');
+    const res = await fetch("/api/invoices");
     if (res.ok) {
       const data = await res.json();
       if (data.success && Array.isArray(data.invoices)) {
@@ -135,30 +143,30 @@ export async function fetchAllInvoices(): Promise<Invoice[]> {
       }
     }
   } catch (err) {
-    console.warn('Failed to fetch invoices from server database', err);
+    console.warn("Failed to fetch invoices from server database", err);
   }
   return [];
 }
 
 export async function saveInvoiceRecord(invoice: Invoice): Promise<void> {
-  const res = await fetch('/api/invoices', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+  const res = await fetch("/api/invoices", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(invoice),
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    throw new Error(data.message || 'Gagal menyimpan invoice ke database');
+    throw new Error(data.message || "Gagal menyimpan invoice ke database");
   }
 }
 
 export async function deleteInvoiceRecord(id: string): Promise<void> {
   const res = await fetch(`/api/invoices/${encodeURIComponent(id)}`, {
-    method: 'DELETE',
+    method: "DELETE",
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    throw new Error(data.message || 'Gagal menghapus invoice dari database');
+    throw new Error(data.message || "Gagal menghapus invoice dari database");
   }
 }
 
@@ -166,7 +174,10 @@ export async function deleteInvoiceRecord(id: string): Promise<void> {
 // SETTINGS PERSISTENCE (ACTUAL DATABASE)
 // ==========================================
 
-export async function fetchSetting<T>(key: string, defaultValue: T): Promise<T> {
+export async function fetchSetting<T>(
+  key: string,
+  defaultValue: T,
+): Promise<T> {
   try {
     const res = await fetch(`/api/settings/${encodeURIComponent(key)}`);
     if (res.ok) {
@@ -181,41 +192,58 @@ export async function fetchSetting<T>(key: string, defaultValue: T): Promise<T> 
   return defaultValue;
 }
 
-export async function saveSettingRecord<T>(key: string, value: T): Promise<void> {
+export async function saveSettingRecord<T>(
+  key: string,
+  value: T,
+): Promise<void> {
   const res = await fetch(`/api/settings/${encodeURIComponent(key)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ value }),
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    throw new Error(data.message || `Gagal menyimpan pengaturan ${key} ke database`);
+    throw new Error(
+      data.message || `Gagal menyimpan pengaturan ${key} ke database`,
+    );
   }
 }
 
 // Convenience wrappers for specific settings
 export async function fetchBusinessProfile(): Promise<BusinessProfile> {
-  return fetchSetting<BusinessProfile>('business_profile', defaultBusinessProfile);
+  return fetchSetting<BusinessProfile>(
+    "business_profile",
+    defaultBusinessProfile,
+  );
 }
 
-export async function saveBusinessProfile(profile: BusinessProfile): Promise<void> {
-  return saveSettingRecord<BusinessProfile>('business_profile', profile);
+export async function saveBusinessProfile(
+  profile: BusinessProfile,
+): Promise<void> {
+  return saveSettingRecord<BusinessProfile>("business_profile", profile);
 }
 
-export async function fetchOpenWaConfig(): Promise<OpenWaConfig> {
-  return fetchSetting<OpenWaConfig>('openwa_config', defaultOpenWaConfig);
+export async function fetchOpenWaConfig(): Promise<WhatsAppConfig> {
+  // <-- Tipe diperbaiki
+  return fetchSetting<WhatsAppConfig>("openwa_config", defaultOpenWaConfig);
 }
 
-export async function saveOpenWaConfig(config: OpenWaConfig): Promise<void> {
-  return saveSettingRecord<OpenWaConfig>('openwa_config', config);
+export async function saveOpenWaConfig(config: WhatsAppConfig): Promise<void> {
+  // <-- Tipe diperbaiki
+  return saveSettingRecord<WhatsAppConfig>("openwa_config", config);
 }
 
 export async function fetchStoreApiConfig(): Promise<StoreApiConfig> {
-  return fetchSetting<StoreApiConfig>('store_api_config', defaultStoreApiConfig);
+  return fetchSetting<StoreApiConfig>(
+    "store_api_config",
+    defaultStoreApiConfig,
+  );
 }
 
-export async function saveStoreApiConfig(config: StoreApiConfig): Promise<void> {
-  return saveSettingRecord<StoreApiConfig>('store_api_config', config);
+export async function saveStoreApiConfig(
+  config: StoreApiConfig,
+): Promise<void> {
+  return saveSettingRecord<StoreApiConfig>("store_api_config", config);
 }
 
 // ==========================================
@@ -250,6 +278,8 @@ CREATE TABLE IF NOT EXISTS invoices (
     payment_instructions TEXT,
     paid_at TIMESTAMPTZ,
     paid_method TEXT,
+    payment_method TEXT,          -- <-- KOLOM BARU
+    payment_account_number TEXT,  -- <-- KOLOM BARU
     whatsapp_status TEXT DEFAULT 'not_sent',
     whatsapp_sent_at TIMESTAMPTZ,
     whatsapp_recipient TEXT,
