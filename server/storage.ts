@@ -6,7 +6,6 @@ import { getDatabaseConfig } from "./config";
 const DATA_DIR = path.resolve(process.cwd(), "data");
 const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
 
-// Pastikan folder uploads ada di lokal
 if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
@@ -18,25 +17,31 @@ export async function uploadImage(
   try {
     const config = getDatabaseConfig();
 
-    // Bersihkan prefix data URI (misal: "data:image/png;base64,")
+    // Bersihkan prefix
     const cleanBase64 = base64Data.includes(",")
       ? base64Data.split(",")[1]
       : base64Data;
     const buffer = Buffer.from(cleanBase64, "base64");
-
-    // Buat nama file unik untuk menghindari tabrakan
     const ext = path.extname(originalFilename) || ".png";
     const filename = `img_${Date.now()}${ext}`;
 
-    // ── OPSI 1: SUPABASE STORAGE (Cloudflare / Production) ──
+    // ==========================================
+    // DEBUG: TAMPILKAN STATUS CONFIG
+    // ==========================================
+    console.log("=========================================");
+    console.log("🔍 [DEBUG UPLOAD]");
+    console.log("Active Driver:", config.activeDriver);
+    console.log("Supabase URL:", config.supabase.url ? "TERISI" : "KOSONG");
+    console.log("Supabase Key:", config.supabase.anonKey ? "TERISI" : "KOSONG");
+    console.log("=========================================");
+
+    // ── OPSI 1: SUPABASE STORAGE ──
     if (
       config.activeDriver === "supabase" &&
       config.supabase.url &&
       config.supabase.anonKey
     ) {
-      console.log(
-        `⏳ [Storage] Mencoba upload "${filename}" ke Supabase Storage...`,
-      );
+      console.log("⏳ [Storage] Mencoba upload ke Supabase Storage...");
 
       const bucketName =
         process.env.SUPABASE_STORAGE_BUCKET || "smartinvoice-assets";
@@ -54,10 +59,9 @@ export async function uploadImage(
 
       if (error) {
         console.error("❌ [Storage] Gagal upload ke Supabase:", error.message);
-        throw error;
+        throw new Error(`Supabase Error: ${error.message}`);
       }
 
-      // Ambil URL Publik
       const { data: publicUrlData } = supabase.storage
         .from(bucketName)
         .getPublicUrl(`public/${filename}`);
@@ -69,15 +73,13 @@ export async function uploadImage(
       return { success: true, url: publicUrlData.publicUrl };
     }
 
-    // ── OPSI 2: LOCAL DISK (Docker / Self-Hosted) ──
+    // ── OPSI 2: LOCAL DISK ──
     console.log(
-      `⚠️ [Storage] Supabase tidak aktif. Menyimpan "${filename}" ke disk lokal...`,
+      "⚠️ [Storage] Supabase tidak aktif. Menyimpan ke disk lokal...",
     );
-
     const filePath = path.join(UPLOADS_DIR, filename);
     fs.writeFileSync(filePath, buffer);
 
-    // Kembalikan URL relatif yang bisa diakses via static route di Express/Bun
     console.log(`✅ [Storage] Berhasil simpan ke lokal: /uploads/${filename}`);
     return { success: true, url: `/uploads/${filename}` };
   } catch (err: any) {

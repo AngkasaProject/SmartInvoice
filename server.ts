@@ -45,12 +45,10 @@ async function startServer() {
     try {
       const { image, filename } = req.body;
       if (!image) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message: "Tidak ada data gambar yang dikirim.",
-          });
+        return res.status(400).json({
+          success: false,
+          message: "Tidak ada data gambar yang dikirim.",
+        });
       }
 
       // Panggil abstraksi storage (Supabase / Lokal)
@@ -99,20 +97,36 @@ async function startServer() {
             config.supabase.url,
             config.supabase.anonKey,
           );
-          const parts = fileUrl.split("/");
-          const filename = parts[parts.length - 1];
-          const bucketName =
-            process.env.SUPABASE_STORAGE_BUCKET || "smartinvoice-assets";
 
-          await supabase.storage
-            .from(bucketName)
-            .remove([`public/${filename}`]);
-          return res.json({ success: true, message: "File Supabase dihapus" });
+          // Ekstrak path lengkap setelah '/public/'
+          // URL: .../public/smartinvoice-assets/public/img_123.png
+          // Regex akan mengambil: public/img_123.png
+          const match = fileUrl.match(/\/([^/]+\/[^/]+)$/);
+          const filePathInBucket = match ? match[1] : "";
+
+          if (filePathInBucket) {
+            const bucketName =
+              process.env.SUPABASE_STORAGE_BUCKET || "smartinvoice-assets";
+            console.log(
+              `[Delete] Menghapus ${filePathInBucket} dari bucket ${bucketName}`,
+            );
+
+            const { error } = await supabase.storage
+              .from(bucketName)
+              .remove([filePathInBucket]);
+            if (error) throw error;
+
+            return res.json({
+              success: true,
+              message: "File Supabase dihapus",
+            });
+          }
         }
       }
 
       return res.json({ success: true });
     } catch (err: any) {
+      console.error("[Delete] Error:", err.message);
       return res.status(500).json({ success: false, message: err.message });
     }
   });
@@ -264,7 +278,6 @@ async function startServer() {
         try {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 6000);
-
           const target = `${cleanUrl}${ep}`;
           const response = await fetch(target, {
             method: "GET",
@@ -292,7 +305,6 @@ async function startServer() {
       }
 
       const latencyMs = Date.now() - startTime;
-
       if (connected) {
         return res.json({
           success: true,
@@ -308,10 +320,12 @@ async function startServer() {
         latencyMs,
       });
     } catch (err: any) {
-      return res.status(500).json({
-        success: false,
-        message: err?.message || "Gagal menghubungi server OpenWA",
-      });
+      return res
+        .status(500)
+        .json({
+          success: false,
+          message: err?.message || "Gagal menghubungi server OpenWA",
+        });
     }
   });
 
@@ -328,23 +342,20 @@ async function startServer() {
       caption,
     } = req.body;
 
-    if (!serverUrl) {
+    if (!serverUrl)
       return res
         .status(400)
         .json({
           success: false,
           message: "Server URL OpenWA belum ditentukan",
         });
-    }
-
-    if (!chatId && !phone) {
+    if (!chatId && !phone)
       return res
         .status(400)
         .json({
           success: false,
           message: "Nomor WhatsApp penerima belum diisi",
         });
-    }
 
     const cleanUrl = serverUrl.replace(/\/+$/, "");
     const cleanPhone = (phone || chatId || "").replace(/\D/g, "");
@@ -367,7 +378,6 @@ async function startServer() {
       targetPath = "/sendMessageWithMedia";
     else if (endpointType === "custom" && customEndpointPath)
       targetPath = customEndpointPath;
-
     if (!targetPath.startsWith("/")) targetPath = "/" + targetPath;
 
     const payloadCandidates = [
@@ -375,7 +385,7 @@ async function startServer() {
         to: formattedChatId,
         chatId: formattedChatId,
         phone: formattedChatId,
-        file: file,
+        file,
         filename: filename || "Invoice.pdf",
         caption: caption || "",
       },
@@ -395,7 +405,6 @@ async function startServer() {
         try {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 15000);
-
           const fullTargetUrl = `${cleanUrl}${targetPath}`;
           const response = await fetch(fullTargetUrl, {
             method: "POST",
@@ -432,7 +441,6 @@ async function startServer() {
           data: finalResponse,
         });
       }
-
       return res.json({
         success: !lastErrorMessage,
         message: lastErrorMessage
@@ -441,10 +449,12 @@ async function startServer() {
         data: finalResponse,
       });
     } catch (err: any) {
-      return res.status(500).json({
-        success: false,
-        message: err.message || "Kesalahan internal proxy OpenWA",
-      });
+      return res
+        .status(500)
+        .json({
+          success: false,
+          message: err.message || "Kesalahan internal proxy OpenWA",
+        });
     }
   });
 
@@ -453,22 +463,18 @@ async function startServer() {
   // ==========================================
   app.post("/api/fonnte/test", async (req, res) => {
     const { token } = req.body;
-    if (!token || !token.trim()) {
+    if (!token || !token.trim())
       return res
         .status(400)
         .json({ success: false, message: "Token Fonnte belum diisi." });
-    }
 
     const startTime = Date.now();
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8000);
-
       const response = await fetch("https://api.fonnte.com/device", {
         method: "POST",
-        headers: {
-          Authorization: token.trim(),
-        },
+        headers: { Authorization: token.trim() },
         signal: controller.signal,
       });
       clearTimeout(timeout);
@@ -494,7 +500,6 @@ async function startServer() {
           });
         }
       }
-
       return res.json({
         success: false,
         message:
@@ -505,31 +510,29 @@ async function startServer() {
         data,
       });
     } catch (err: any) {
-      const latencyMs = Date.now() - startTime;
-      return res.status(500).json({
-        success: false,
-        message: "Gagal menghubungi server Fonnte: " + err.message,
-        latencyMs,
-      });
+      return res
+        .status(500)
+        .json({
+          success: false,
+          message: "Gagal menghubungi server Fonnte: " + err.message,
+          latencyMs: Date.now() - startTime,
+        });
     }
   });
 
   app.post("/api/fonnte/send", async (req, res) => {
     const { token, target, file, filename, caption } = req.body;
-
-    if (!token) {
+    if (!token)
       return res
         .status(400)
         .json({ success: false, message: "Token Fonnte wajib diisi." });
-    }
-    if (!target) {
+    if (!target)
       return res
         .status(400)
         .json({
           success: false,
           message: "Nomor WhatsApp penerima wajib diisi.",
         });
-    }
 
     let cleanTarget = target.replace(/\D/g, "");
     if (cleanTarget.startsWith("0")) cleanTarget = "62" + cleanTarget.slice(1);
@@ -537,7 +540,6 @@ async function startServer() {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 20000);
-
       const payload: Record<string, any> = {
         target: cleanTarget,
         message: caption || "",
@@ -562,7 +564,6 @@ async function startServer() {
       clearTimeout(timeout);
 
       const data: any = await response.json();
-
       if (data.status === true) {
         return res.json({
           success: true,
@@ -570,7 +571,6 @@ async function startServer() {
           data,
         });
       }
-
       return res.json({
         success: false,
         message:
@@ -578,10 +578,12 @@ async function startServer() {
         data,
       });
     } catch (err: any) {
-      return res.status(500).json({
-        success: false,
-        message: "Gagal mengirim pesan via Fonnte: " + err.message,
-      });
+      return res
+        .status(500)
+        .json({
+          success: false,
+          message: "Gagal mengirim pesan via Fonnte: " + err.message,
+        });
     }
   });
 
@@ -604,19 +606,20 @@ async function startServer() {
         status = "unpaid",
       } = req.body;
 
-      if (!customer || !customer.name || !customer.phone) {
-        return res.status(400).json({
-          success: false,
-          message: "Data customer (nama dan nomor WhatsApp) wajib diisi.",
-        });
-      }
-
-      if (!Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: "Daftar item pesanan toko tidak boleh kosong.",
-        });
-      }
+      if (!customer || !customer.name || !customer.phone)
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message: "Data customer (nama dan nomor WhatsApp) wajib diisi.",
+          });
+      if (!Array.isArray(items) || items.length === 0)
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message: "Daftar item pesanan toko tidak boleh kosong.",
+          });
 
       const today = new Date().toISOString().split("T")[0];
       const dueDateObj = new Date();
@@ -651,7 +654,6 @@ async function startServer() {
       const discountVal = parseFloat(discount) || 0;
       const shipVal = parseFloat(shippingFee) || 0;
       const taxRateVal = parseFloat(taxRate) || 0;
-
       const taxable = Math.max(0, subtotal - discountVal);
       const taxAmount = (taxable * taxRateVal) / 100;
       const total = Math.max(0, taxable + taxAmount + shipVal);
@@ -700,10 +702,12 @@ async function startServer() {
         invoice: newInvoice,
       });
     } catch (err: any) {
-      return res.status(500).json({
-        success: false,
-        message: "Gagal memproses pesanan toko: " + err.message,
-      });
+      return res
+        .status(500)
+        .json({
+          success: false,
+          message: "Gagal memproses pesanan toko: " + err.message,
+        });
     }
   };
 
@@ -724,7 +728,6 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    // Serve production static assets
     const distPath = path.resolve(__dirname, "dist");
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
