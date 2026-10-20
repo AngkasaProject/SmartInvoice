@@ -51,15 +51,25 @@ export interface BusinessProfile {
   currencySymbol: string;
 }
 
-export interface OpenWaConfig {
+export type WhatsAppProvider = 'openwa' | 'fonnte';
+
+export interface WhatsAppConfig {
+  provider: WhatsAppProvider; // 'openwa' | 'fonnte'
+  // OpenWA settings (compatible with rmyndharis/OpenWA)
   serverUrl: string; // e.g. http://localhost:8080
   apiKey: string;
-  sessionName: string;
+  sessionName: string; // UUID session
+  // Fonnte settings (https://fonnte.com)
+  fonnteToken: string;
+  // General sending options
   endpointType: 'sendPdf' | 'sendFile' | 'sendMessageWithMedia' | 'custom';
   customEndpointPath: string;
   autoSendCaption: string;
   directWhatsappFallback: boolean;
 }
+
+// Kept for backwards compatibility across existing components
+export type OpenWaConfig = WhatsAppConfig;
 
 export interface StoreApiConfig {
   webhookSecret: string;
@@ -105,7 +115,30 @@ export interface DashboardStats {
   totalOverdue: number;
   countAll: number;
   countPaid: number;
-  countUnpaid: number;
   countOverdue: number;
   countDraft: number;
+}
+
+export type DatabaseDriver = 'sqlite' | 'mariadb' | 'supabase';
+
+export interface MariaDbCredentials {
+  host: string;
+  port: number;
+  user: string;
+  password?: string;
+  database: string;
+}
+
+export interface SupabaseCredentials {
+  url: string;
+  anonKey: string;
+}
+
+export interface DatabaseConfig {
+  activeDriver: DatabaseDriver;
+  sqlite: {
+    filePath: string;
+  };
+  mariadb: MariaDbCredentials;
+  supabase: SupabaseCredentials;
 }

@@ -1,15 +1,15 @@
 import { BusinessProfile, Invoice, OpenWaConfig, StoreApiConfig } from '../types/invoice';
 
 const STORAGE_KEYS = {
-  INVOICES: 'kiriminvoice_invoices_v1',
-  BUSINESS_PROFILE: 'kiriminvoice_business_profile_v1',
-  OPENWA_CONFIG: 'kiriminvoice_openwa_config_v1',
-  STORE_API_CONFIG: 'kiriminvoice_store_api_config_v1',
+  INVOICES: 'smartinvoice_invoices_v1',
+  BUSINESS_PROFILE: 'smartinvoice_business_profile_v1',
+  OPENWA_CONFIG: 'smartinvoice_openwa_config_v1',
+  STORE_API_CONFIG: 'smartinvoice_store_api_config_v1',
 };
 
 export const defaultBusinessProfile: BusinessProfile = {
   id: 'biz_default',
-  businessName: 'Solusi Digital Nusantara',
+  businessName: 'SmartInvoice Digital Nusantara',
   tagline: 'Jasa IT Solusi, Desain Kreatif & Perangkat Lunak',
   ownerName: 'Yoga Saputra',
   phone: '081288991234',
@@ -36,9 +36,11 @@ export const defaultBusinessProfile: BusinessProfile = {
 };
 
 export const defaultOpenWaConfig: OpenWaConfig = {
+  provider: 'openwa',
   serverUrl: 'http://localhost:8080',
   apiKey: '',
   sessionName: 'default',
+  fonnteToken: '',
   endpointType: 'sendPdf',
   customEndpointPath: '/sendPdf',
   autoSendCaption: `Halo {client_name},
@@ -62,7 +64,7 @@ export const defaultStoreApiConfig: StoreApiConfig = {
   invoicePrefix: 'INV-STORE',
 };
 
-const initialSampleInvoices: Invoice[] = [
+export const initialSampleInvoices: Invoice[] = [
   {
     id: 'inv_sample_001',
     invoiceNumber: 'INV-202610-001',
@@ -115,7 +117,7 @@ const initialSampleInvoices: Invoice[] = [
     whatsappStatus: 'sent',
     whatsappSentAt: '2026-10-10T14:20:00.000Z',
     whatsappRecipient: '6281234567890@c.us',
-    whatsappLastLog: 'Berhasil dikirim via OpenWA API',
+    whatsappLastLog: 'Berhasil dikirim via WhatsApp Gateway',
     createdAt: '2026-10-10T08:00:00.000Z',
     updatedAt: '2026-10-14T10:30:00.000Z',
   },
@@ -169,7 +171,7 @@ const initialSampleInvoices: Invoice[] = [
     whatsappStatus: 'sent',
     whatsappSentAt: '2026-10-15T09:15:00.000Z',
     whatsappRecipient: '6281987654321@c.us',
-    whatsappLastLog: 'Terkirim via OpenWA',
+    whatsappLastLog: 'Terkirim via WhatsApp',
     createdAt: '2026-10-15T09:00:00.000Z',
     updatedAt: '2026-10-15T09:15:00.000Z',
   },
@@ -223,7 +225,7 @@ const initialSampleInvoices: Invoice[] = [
     whatsappStatus: 'sent',
     whatsappSentAt: '2026-10-01T11:00:00.000Z',
     whatsappRecipient: '6285712349999@c.us',
-    whatsappLastLog: 'Sent via OpenWA',
+    whatsappLastLog: 'Sent via WhatsApp',
     createdAt: '2026-10-01T10:00:00.000Z',
     updatedAt: '2026-10-16T08:00:00.000Z',
   },
@@ -245,7 +247,7 @@ const initialSampleInvoices: Invoice[] = [
       {
         id: 'item_7',
         name: 'Pengaturan WhatsApp Bot Jadwal Pasien Otomatis',
-        description: 'Integrasi OpenWA gateway dengan database antrean poliklinik',
+        description: 'Integrasi WhatsApp gateway dengan database antrean poliklinik',
         quantity: 1,
         unit: 'Sistem',
         unitPrice: 3500000,

@@ -1,0 +1,9 @@
+{
+  "driver": "local",
+  "credentials": {},
+  "activeDriver": "supabase",
+  "supabase": {
+    "anonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ1cmRkZ2pka2lhY3FudWNjanlsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIzOTk4MTIsImV4cCI6MjEwNzk3NTgxMn0.62HXJ_fCualHB8kol3aUldJqaSssntqjR9VUj-NwrJU",
+    "url": "https://furddgjdkiacqnuccjyl.supabase.co"
+  }
+}

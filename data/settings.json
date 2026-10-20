@@ -1,0 +1,41 @@
+{
+  "openwa_config": {
+    "provider": "openwa",
+    "serverUrl": "https://wa.angkasaproject.web.id",
+    "apiKey": "owa_k1_bba475c54a36d138c77bd3f04306da9b992a88276f569556f4a6360d264cf126",
+    "sessionName": "a971a004-a7b0-4a74-b810-cb7afe9d6ed0",
+    "fonnteToken": "",
+    "endpointType": "sendPdf",
+    "customEndpointPath": "/sendPdf",
+    "autoSendCaption": "Halo {client_name},\n\nBerikut kami lampirkan dokumen invoice resmi *{invoice_no}* sebesar *{total}* dari *{company_name}*.\n\n📅 *Jatuh Tempo:* {due_date}\n📌 *Status:* {status}\n\n💳 *Informasi Pembayaran:*\n{bank_info}\n\nSilakan kirimkan bukti transfer ke nomor WhatsApp ini setelah pembayaran selesai. Terima kasih banyak atas kepercayaan Anda! 🙏",
+    "directWhatsappFallback": true
+  },
+  "business_profile": {
+    "id": "biz_default",
+    "businessName": "SmartInvoice Digital Nusantara",
+    "tagline": "Jasa IT Solusi, Desain Kreatif & Perangkat Lunak",
+    "ownerName": "Yoga Saputra",
+    "phone": "081288991234",
+    "email": "halo@solusidigital.id",
+    "address": "Jl. Jend. Sudirman No. 45, Gedung Graha Pratama Lt. 4",
+    "city": "Jakarta Selatan",
+    "postalCode": "12190",
+    "website": "https://solusidigital.id",
+    "taxId": "01.234.567.8-012.000",
+    "bankName": "BCA (Bank Central Asia)",
+    "bankAccountNumber": "8291038472",
+    "bankAccountHolder": "Yoga Saputra",
+    "secondaryBank": {
+      "bankName": "Bank Mandiri",
+      "bankAccountNumber": "1370019283741",
+      "bankAccountHolder": "CV Solusi Digital Nusantara"
+    },
+    "qrisImageUrl": "",
+    "invoicePrefix": "INV",
+    "defaultTaxRate": 11,
+    "defaultTerms": "1. Pembayaran ditransfer ke rekening bank resmi yang tercantum di invoice.\n2. Harap cantumkan Nomor Invoice pada berita transfer.\n3. Konfirmasi pembayaran dapat dikirimkan ke WhatsApp kami.\n4. Terima kasih telah mempercayakan bisnis Anda bersama kami.",
+    "defaultNotes": "Terima kasih atas kerja samanya. Layanan purna jual aktif 30 hari kalender setelah serah terima.",
+    "currencySymbol": "Rp",
+    "logoUrl": "/uploads/logo-web_1792471455809.png"
+  }
+}

@@ -3,120 +3,109 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
-import { BusinessProfile, Invoice, OpenWaConfig } from './types/invoice';
+import React, { useState, useEffect } from "react";
+import { BusinessProfile, Invoice, OpenWaConfig } from "./types/invoice";
 import {
-  loadBusinessProfileFromStorage,
-  saveBusinessProfileToStorage,
-  loadOpenWaConfigFromStorage,
-  saveOpenWaConfigToStorage,
-  resetToSampleData,
-} from './services/storage';
+  defaultBusinessProfile,
+  defaultOpenWaConfig,
+} from "./services/storage";
 import {
   deleteInvoiceRecord,
   fetchAllInvoices,
-  loadDatabaseSettings,
+  fetchBusinessProfile,
+  fetchOpenWaConfig,
+  saveBusinessProfile,
   saveInvoiceRecord,
-} from './services/dbAdapter';
-import { Navbar } from './components/Navbar';
-import { DashboardView } from './components/DashboardView';
-import { InvoiceForm } from './components/InvoiceForm';
-import { HistoryView } from './components/HistoryView';
-import { InvoiceDetailModal } from './components/InvoiceDetailModal';
-import { WhatsAppSendModal } from './components/WhatsAppSendModal';
-import { SettingsView } from './components/SettingsView';
-import { PostSaveActionModal } from './components/PostSaveActionModal';
-import { InvoicePrintable } from './components/InvoicePrintable';
-import { Toaster, toast } from 'sonner';
+  saveOpenWaConfig,
+} from "./services/dbAdapter";
+import { Navbar } from "./components/Navbar";
+import { DashboardView } from "./components/DashboardView";
+import { InvoiceForm } from "./components/InvoiceForm";
+import { HistoryView } from "./components/HistoryView";
+import { InvoiceDetailModal } from "./components/InvoiceDetailModal";
+import { WhatsAppSendModal } from "./components/WhatsAppSendModal";
+import { SettingsView } from "./components/SettingsView";
+import { PostSaveActionModal } from "./components/PostSaveActionModal";
+import { InvoicePrintable } from "./components/InvoicePrintable";
+import { Toaster, toast } from "sonner";
 
 export default function App() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [business, setBusiness] = useState<BusinessProfile>(loadBusinessProfileFromStorage);
-  const [openWaConfig, setOpenWaConfig] = useState<OpenWaConfig>(loadOpenWaConfigFromStorage);
-  const [dbSettings, setDbSettings] = useState(loadDatabaseSettings);
+  const [business, setBusiness] = useState<BusinessProfile>(
+    defaultBusinessProfile,
+  );
+  const [openWaConfig, setOpenWaConfig] =
+    useState<OpenWaConfig>(defaultOpenWaConfig);
 
-  const [currentView, setCurrentView] = useState<'dashboard' | 'create' | 'edit' | 'history' | 'settings'>('dashboard');
+  const [currentView, setCurrentView] = useState<
+    "dashboard" | "create" | "edit" | "history" | "settings"
+  >("dashboard");
   const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
   const [detailInvoice, setDetailInvoice] = useState<Invoice | null>(null);
-  const [whatsAppModalInvoice, setWhatsAppModalInvoice] = useState<Invoice | null>(null);
+  const [whatsAppModalInvoice, setWhatsAppModalInvoice] =
+    useState<Invoice | null>(null);
   const [postSaveInvoice, setPostSaveInvoice] = useState<Invoice | null>(null);
 
-  // Load invoices from active database (Supabase or Local)
+  // Load invoices from active database
   const refreshInvoices = async () => {
     try {
       const data = await fetchAllInvoices();
       setInvoices(data);
-      setDbSettings(loadDatabaseSettings());
     } catch (err: any) {
-      console.error('Failed to load invoices', err);
-      toast.error('Gagal memuat data invoice: ' + err.message);
+      console.error("Failed to load invoices", err);
+      toast.error("Gagal memuat data invoice: " + err.message);
     }
   };
 
   useEffect(() => {
     refreshInvoices();
+    fetchBusinessProfile().then((p) => setBusiness(p));
+    fetchOpenWaConfig().then((cfg) => setOpenWaConfig(cfg));
   }, []);
 
-  // Check for incoming store orders from webhook
-  useEffect(() => {
-    const checkIncomingOrders = async () => {
-      try {
-        const res = await fetch('/api/orders/webhook');
-        if (res.ok) {
-          const data = await res.json();
-          if (data.success && Array.isArray(data.orders) && data.orders.length > 0) {
-            for (const order of data.orders) {
-              await saveInvoiceRecord(order);
-              toast.success(`Pesanan Toko Baru Masuk: ${order.invoiceNumber}!`, {
-                description: `Customer: ${order.client.name} • Total: Rp ${order.total.toLocaleString('id-ID')}`,
-              });
-            }
-            await refreshInvoices();
-          }
-        }
-      } catch {
-        // Ignore polling errors
-      }
-    };
-
-    const interval = setInterval(checkIncomingOrders, 4000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // Save changes to active database & local storage
-  const handleSaveInvoice = async (invoiceToSave: Invoice, isEditing: boolean) => {
+  // Save changes to active database
+  const handleSaveInvoice = async (
+    invoiceToSave: Invoice,
+    isEditing: boolean,
+  ) => {
     try {
       await saveInvoiceRecord(invoiceToSave);
       const updatedList = await fetchAllInvoices();
       setInvoices(updatedList);
 
       setEditingInvoice(null);
-      setCurrentView('dashboard');
+      setCurrentView("dashboard");
 
       if (isEditing) {
-        toast.success(`Invoice ${invoiceToSave.invoiceNumber} berhasil diperbarui!`, {
-          description: `Customer: ${invoiceToSave.client.name} • ${invoiceToSave.client.phone}`,
-        });
+        toast.success(
+          `Invoice ${invoiceToSave.invoiceNumber} berhasil diperbarui di database!`,
+          {
+            description: `Customer: ${invoiceToSave.client.name} • ${invoiceToSave.client.phone}`,
+          },
+        );
       } else {
-        toast.success(`Invoice ${invoiceToSave.invoiceNumber} berhasil dibuat!`, {
-          description: `Customer: ${invoiceToSave.client.name} • ${invoiceToSave.client.phone}`,
-        });
+        toast.success(
+          `Invoice ${invoiceToSave.invoiceNumber} berhasil dibuat di database!`,
+          {
+            description: `Customer: ${invoiceToSave.client.name} • ${invoiceToSave.client.phone}`,
+          },
+        );
       }
 
       // Display the post-save popup (allows instant PDF download or WhatsApp send)
       setPostSaveInvoice(invoiceToSave);
     } catch (err: any) {
-      toast.error('Gagal menyimpan invoice: ' + err.message);
+      toast.error("Gagal menyimpan invoice: " + err.message);
     }
   };
 
   const handleTogglePaid = async (invoice: Invoice) => {
-    const isNowPaid = invoice.status !== 'paid';
+    const isNowPaid = invoice.status !== "paid";
     const updatedInvoice: Invoice = {
       ...invoice,
-      status: isNowPaid ? 'paid' : 'unpaid',
+      status: isNowPaid ? "paid" : "unpaid",
       paidAt: isNowPaid ? new Date().toISOString() : undefined,
-      paidMethod: isNowPaid ? (invoice.paidMethod || 'Transfer Bank') : undefined,
+      paidMethod: isNowPaid ? invoice.paidMethod || "Transfer Bank" : undefined,
       updatedAt: new Date().toISOString(),
     };
 
@@ -126,10 +115,12 @@ export default function App() {
 
     if (isNowPaid) {
       toast.success(`Invoice ${invoice.invoiceNumber} ditandai LUNAS!`, {
-        description: `Pembayaran sebesar Rp ${invoice.total.toLocaleString('id-ID')} telah diverifikasi.`,
+        description: `Pembayaran sebesar Rp ${invoice.total.toLocaleString("id-ID")} telah disimpan di database.`,
       });
     } else {
-      toast.info(`Invoice ${invoice.invoiceNumber} diubah ke status BELUM LUNAS.`);
+      toast.info(
+        `Invoice ${invoice.invoiceNumber} diubah ke status BELUM LUNAS.`,
+      );
     }
 
     if (detailInvoice && detailInvoice.id === invoice.id) {
@@ -142,12 +133,12 @@ export default function App() {
       await deleteInvoiceRecord(id);
       const updated = await fetchAllInvoices();
       setInvoices(updated);
-      toast.success('Invoice berhasil dihapus.');
+      toast.success("Invoice berhasil dihapus dari database.");
       if (detailInvoice && detailInvoice.id === id) {
         setDetailInvoice(null);
       }
     } catch (err: any) {
-      toast.error('Gagal menghapus invoice: ' + err.message);
+      toast.error("Gagal menghapus invoice: " + err.message);
     }
   };
 
@@ -155,11 +146,11 @@ export default function App() {
     const newNum = `${invoice.invoiceNumber}-COPY`;
     const cloned: Invoice = {
       ...invoice,
-      id: 'inv_' + Date.now(),
+      id: "inv_" + Date.now(),
       invoiceNumber: newNum,
-      status: 'draft',
-      issueDate: new Date().toISOString().split('T')[0],
-      whatsappStatus: 'not_sent',
+      status: "draft",
+      issueDate: new Date().toISOString().split("T")[0],
+      whatsappStatus: "not_sent",
       whatsappSentAt: undefined,
       whatsappRecipient: undefined,
       createdAt: new Date().toISOString(),
@@ -170,14 +161,14 @@ export default function App() {
     const updated = await fetchAllInvoices();
     setInvoices(updated);
     setEditingInvoice(cloned);
-    setCurrentView('edit');
+    setCurrentView("edit");
     toast.info(`Invoice digandakan sebagai ${newNum}. Mode edit dibuka.`);
   };
 
   const handleOpenEdit = (invoice: Invoice) => {
     setEditingInvoice(invoice);
     setDetailInvoice(null);
-    setCurrentView('edit');
+    setCurrentView("edit");
   };
 
   const handleOpenWhatsAppModal = (invoice: Invoice) => {
@@ -196,14 +187,14 @@ export default function App() {
     toast.success(`PDF berhasil dikirim ke nomor WhatsApp customer!`);
   };
 
-  const handleSaveBusinessProfile = (profile: BusinessProfile) => {
+  const handleSaveBusinessProfile = async (profile: BusinessProfile) => {
     setBusiness(profile);
-    saveBusinessProfileToStorage(profile);
+    await saveBusinessProfile(profile);
   };
 
-  const handleSaveOpenWaConfig = (config: OpenWaConfig) => {
+  const handleSaveOpenWaConfig = async (config: OpenWaConfig) => {
     setOpenWaConfig(config);
-    saveOpenWaConfigToStorage(config);
+    await saveOpenWaConfig(config);
   };
 
   const handleImportData = async (data: {
@@ -215,24 +206,28 @@ export default function App() {
       await saveInvoiceRecord(inv);
     }
     setBusiness(data.business);
-    saveBusinessProfileToStorage(data.business);
+    await saveBusinessProfile(data.business);
     if (data.config) {
       setOpenWaConfig(data.config);
-      saveOpenWaConfigToStorage(data.config);
+      await saveOpenWaConfig(data.config);
     }
     await refreshInvoices();
   };
 
   const handleResetData = async () => {
-    resetToSampleData();
+    setBusiness(defaultBusinessProfile);
+    await saveBusinessProfile(defaultBusinessProfile);
+    setOpenWaConfig(defaultOpenWaConfig);
+    await saveOpenWaConfig(defaultOpenWaConfig);
     await refreshInvoices();
-    setBusiness(loadBusinessProfileFromStorage());
-    setOpenWaConfig(loadOpenWaConfigFromStorage());
   };
 
-  // Hidden print canvas active item (fallback for background PDF rendering)
+  // Tentukan invoice mana yang akan dirender tersembunyi untuk PDF
   const activePrintInvoice =
-    postSaveInvoice || whatsAppModalInvoice || detailInvoice || (invoices.length > 0 ? invoices[0] : null);
+    postSaveInvoice ||
+    whatsAppModalInvoice ||
+    detailInvoice ||
+    (invoices.length > 0 ? invoices[0] : null);
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900">
@@ -241,9 +236,9 @@ export default function App() {
 
       {/* Top Clean & Functional Navbar */}
       <Navbar
-        currentView={currentView === 'edit' ? 'create' : currentView}
+        currentView={currentView === "edit" ? "create" : currentView}
         onChangeView={(view) => {
-          if (view === 'create') {
+          if (view === "create") {
             setEditingInvoice(null);
           }
           setCurrentView(view);
@@ -253,14 +248,14 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-8 pb-24 md:pb-8">
-        {currentView === 'dashboard' && (
+        {currentView === "dashboard" && (
           <DashboardView
             invoices={invoices}
             business={business}
             config={openWaConfig}
             onOpenCreate={() => {
               setEditingInvoice(null);
-              setCurrentView('create');
+              setCurrentView("create");
             }}
             onOpenDetail={(inv) => setDetailInvoice(inv)}
             onOpenEdit={handleOpenEdit}
@@ -271,7 +266,7 @@ export default function App() {
           />
         )}
 
-        {(currentView === 'create' || currentView === 'edit') && (
+        {(currentView === "create" || currentView === "edit") && (
           <InvoiceForm
             initialInvoice={editingInvoice}
             business={business}
@@ -279,12 +274,12 @@ export default function App() {
             onSave={handleSaveInvoice}
             onCancel={() => {
               setEditingInvoice(null);
-              setCurrentView('dashboard');
+              setCurrentView("dashboard");
             }}
           />
         )}
 
-        {currentView === 'history' && (
+        {currentView === "history" && (
           <HistoryView
             invoices={invoices}
             business={business}
@@ -295,7 +290,7 @@ export default function App() {
           />
         )}
 
-        {currentView === 'settings' && (
+        {currentView === "settings" && (
           <SettingsView
             business={business}
             config={openWaConfig}
@@ -339,7 +334,7 @@ export default function App() {
         onDuplicate={handleDuplicateInvoice}
       />
 
-      {/* WhatsApp OpenWA Automated Send Modal */}
+      {/* WhatsApp Dispatch Modal with Real OpenWA API Execution */}
       {whatsAppModalInvoice && (
         <WhatsAppSendModal
           invoice={whatsAppModalInvoice}
@@ -350,22 +345,34 @@ export default function App() {
           onSentSuccess={handleWhatsAppSentSuccess}
           onOpenSettings={() => {
             setWhatsAppModalInvoice(null);
-            setDetailInvoice(null);
-            setCurrentView('settings');
+            setCurrentView("settings");
           }}
         />
       )}
 
-      {/* Hidden DOM element for reliable background PDF rendering */}
-      {activePrintInvoice && (
-        <div className="fixed -left-[9999px] top-0 pointer-events-none opacity-0">
+      {/* 
+        Hidden print render node 
+        PERBAIKAN: Menggunakan position absolute kiri -9999px agar html2canvas bisa memotretnya
+      */}
+      <div
+        style={{
+          position: "absolute",
+          left: "-9999px",
+          top: 0,
+          width: "820px", // Paksa lebar agar sesuai A4
+          zIndex: -1,
+        }}
+        aria-hidden="true"
+      >
+        {activePrintInvoice && (
           <InvoicePrintable
-            id="printable-invoice-element"
+            id="printable-invoice-element" // ID ini yang dicari oleh pdfGenerator
             invoice={activePrintInvoice}
             business={business}
+            documentType="invoice"
           />
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

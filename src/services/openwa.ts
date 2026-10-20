@@ -1,17 +1,38 @@
 /**
  * OpenWA API Service Integration
- * Final Revision: Mendukung pengiriman PDF beserta caption (teks pengantar)
+ * Sesuai spesifikasi rmyndharis/OpenWA (https://github.com/rmyndharis/OpenWA)
+ * Mendukung pengiriman PDF beserta caption (teks pengantar)
  */
 
-export interface OpenWAConfig {
-  serverUrl: string; // Contoh: https://wa.angkasaproject.web.id
-  apiKey: string;
-  sessionId: string; // Harus UUID (diambil dari Pengaturan)
-}
+import { WhatsAppConfig } from '../types/invoice';
 
-// 1. Fungsi untuk membuat teks caption (Template)
-export function formatCaptionTemplate(invoiceData: any): string {
-  return `Halo, berikut adalah invoice untuk tagihan Anda. Terima kasih telah menggunakan layanan kami.`;
+export type OpenWAConfig = WhatsAppConfig;
+
+// 1. Fungsi untuk membuat teks caption (Template) dengan replacement token
+export function formatCaptionTemplate(template?: string, invoice?: any, business?: any): string {
+  if (!template) {
+    return 'Halo, berikut adalah invoice untuk tagihan Anda. Terima kasih telah menggunakan layanan kami.';
+  }
+
+  const clientName = invoice?.client?.name || 'Pelanggan';
+  const invoiceNo = invoice?.invoiceNumber || '-';
+  const totalStr = invoice?.total ? `Rp ${invoice.total.toLocaleString('id-ID')}` : 'Rp 0';
+  const dueDateStr = invoice?.dueDate || '-';
+  const statusStr = invoice?.status === 'paid' ? 'LUNAS' : invoice?.status === 'overdue' ? 'JATUH TEMPO' : 'BELUM DIBAYAR';
+  const companyName = business?.businessName || 'SmartInvoice';
+
+  const bankInfo = business?.bankName
+    ? `Bank: ${business.bankName}\nNo. Rekening: ${business.bankAccountNumber || '-'}\nAtas Nama: ${business.bankAccountHolder || '-'}`
+    : 'Hubungi admin kami untuk informasi pembayaran.';
+
+  return template
+    .replace(/{client_name}/g, clientName)
+    .replace(/{invoice_no}/g, invoiceNo)
+    .replace(/{total}/g, totalStr)
+    .replace(/{due_date}/g, dueDateStr)
+    .replace(/{status}/g, statusStr)
+    .replace(/{company_name}/g, companyName)
+    .replace(/{bank_info}/g, bankInfo);
 }
 
 // 2. Fungsi untuk membuat URL WhatsApp Web langsung (Fallback)
@@ -22,16 +43,18 @@ export function buildDirectWhatsAppUrl(phone: string, text: string): string {
 }
 
 // 3. Fungsi Utama: Kirim PDF via OpenWA (DENGAN CAPTION)
+// Kompatibel dengan rmyndharis/OpenWA: POST /api/sessions/{sessionId}/messages/send-document
 export async function sendInvoicePdfViaOpenWa(
-  config: OpenWAConfig,
+  config: { serverUrl: string; apiKey: string; sessionName?: string; sessionId?: string },
   chatId: string, 
   base64Pdf: string,
   filename: string,
-  caption?: string // Parameter opsional untuk teks pengantar
+  caption?: string
 ): Promise<{ success: boolean; message: string; data?: any }> {
-  
+  const targetSession = config.sessionName || config.sessionId;
+
   // Validasi konfigurasi
-  if (!config.serverUrl || !config.apiKey || !config.sessionId) {
+  if (!config.serverUrl || !config.apiKey || !targetSession) {
     return { 
       success: false, 
       message: 'Konfigurasi OpenWA belum lengkap. Silakan isi Server URL, API Key, dan Session ID (UUID) di menu Pengaturan.' 
@@ -43,17 +66,17 @@ export async function sendInvoicePdfViaOpenWa(
 
   try {
     const baseUrl = config.serverUrl.replace(/\/$/, ''); 
-    const endpoint = `${baseUrl}/api/sessions/${config.sessionId}/messages/send-document`;
+    const endpoint = `${baseUrl}/api/sessions/${targetSession}/messages/send-document`;
 
     // Bersihkan prefix Base64 jika ada (misal: "data:application/pdf;base64,")
     const cleanBase64 = base64Pdf.includes(',') ? base64Pdf.split(',')[1] : base64Pdf;
 
     const body = {
       chatId: chatId,
-      filename: filename,
+      filename: filename || 'Invoice.pdf',
       mimetype: 'application/pdf',
       base64: cleanBase64,
-      caption: caption || '', // Sisipkan teks pengantar ke dalam request body
+      caption: caption || '',
     };
 
     const response = await fetch(endpoint, {
@@ -71,23 +94,24 @@ export async function sendInvoicePdfViaOpenWa(
       throw new Error(data.message || data.error || 'Gagal mengirim dokumen via OpenWA');
     }
 
-    return { success: true, message: 'Dokumen dan pesan berhasil dikirim', data: data };
+    return { success: true, message: 'Dokumen dan pesan berhasil dikirim via OpenWA!', data: data };
   } catch (error: any) {
     console.error('OpenWA Error:', error);
-    return { success: false, message: error.message || 'Terjadi kesalahan jaringan' };
+    return { success: false, message: error.message || 'Terjadi kesalahan jaringan OpenWA' };
   }
 }
 
-// 4. Fungsi Tes Koneksi
+// 4. Fungsi Tes Koneksi OpenWA (rmyndharis/OpenWA)
 export async function testOpenWaConnection(
   serverUrl: string,
   apiKey: string,
   sessionId: string
-): Promise<{ success: boolean; message: string }> {
+): Promise<{ success: boolean; message: string; latencyMs?: number; data?: any }> {
   if (!serverUrl || !apiKey || !sessionId) {
     return { success: false, message: 'Server URL, API Key, dan Session ID (UUID) wajib diisi.' };
   }
 
+  const startTime = Date.now();
   try {
     const baseUrl = serverUrl.replace(/\/$/, '');
     const endpoint = `${baseUrl}/api/sessions/${sessionId}`;
@@ -96,23 +120,27 @@ export async function testOpenWaConnection(
       method: 'GET',
       headers: { 'X-API-Key': apiKey },
     });
+    const latencyMs = Date.now() - startTime;
 
     if (!response.ok) {
-      return { success: false, message: 'Gagal terhubung. Periksa URL, API Key, dan UUID Anda.' };
+      return { success: false, message: 'Gagal terhubung ke OpenWA. Periksa URL, API Key, dan Session ID UUID Anda.', latencyMs };
     }
 
     const data = await response.json();
     const statusSesi = data?.status?.toLowerCase();
 
     if (statusSesi === 'connected' || statusSesi === 'ready') {
-      return { success: true, message: 'Terhubung ke OpenWA (Sesi Siap)' };
+      return { success: true, message: `Terhubung ke OpenWA (${latencyMs}ms) - Sesi Siap!`, latencyMs, data };
     } else {
       return { 
         success: false, 
-        message: `Server merespons, tapi sesi berstatus: ${data?.status || 'unknown'}. Pastikan WhatsApp sudah tertaut dan scan QR jika perlu.` 
+        message: `Server merespons (${latencyMs}ms), namun sesi berstatus: ${data?.status || 'unknown'}. Pastikan WhatsApp sudah tertaut dan scan QR jika perlu.`,
+        latencyMs,
+        data,
       };
     }
   } catch (error: any) {
-    return { success: false, message: error.message || 'Gagal terhubung ke server OpenWA' };
+    const latencyMs = Date.now() - startTime;
+    return { success: false, message: 'Gagal terhubung ke server OpenWA: ' + error.message, latencyMs };
   }
 }

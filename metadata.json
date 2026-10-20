@@ -1,6 +1,6 @@
 {
-  "name": "KirimInvoice - Aplikasi Invoice & WhatsApp OpenWA Otomatis",
-  "description": "Aplikasi invoice profesional lengkap dengan fitur cetak/download PDF, edit invoice, pemantau status pembayaran real-time, pengaturan ID usaha, dan pengiriman otomatis via WhatsApp OpenWA API.",
+  "name": "SmartInvoice - Aplikasi Invoice & WhatsApp Gateway Otomatis",
+  "description": "Aplikasi invoice profesional lengkap dengan fitur cetak/download PDF, edit invoice, pemantau status pembayaran real-time, pengaturan ID usaha, dan pengiriman otomatis via WhatsApp OpenWA API & Fonnte.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

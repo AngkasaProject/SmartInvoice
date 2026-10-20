@@ -1,5 +1,5 @@
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas-pro';
+import jsPDF from "jspdf";
+import html2canvas from "html2canvas-pro";
 
 export interface GeneratedPdfResult {
   fileName: string;
@@ -7,77 +7,95 @@ export interface GeneratedPdfResult {
   blob: Blob;
 }
 
-/**
- * Renders an HTML element as high-resolution PDF and returns Base64 & Blob
- */
 export async function generateInvoicePdf(
   elementId: string,
-  fileName: string = 'Invoice.pdf'
+  fileName: string = "Invoice.pdf",
 ): Promise<GeneratedPdfResult> {
   const element = document.getElementById(elementId);
   if (!element) {
-    throw new Error(`Elemen invoice dengan ID "${elementId}" tidak ditemukan.`);
+    throw new Error(
+      `Elemen invoice dengan ID "${elementId}" tidak ditemukan. Pastikan elemen tersebut ada di halaman.`,
+    );
   }
 
-  // Clone or capture with high scale for high-DPI crisp rendering
-  const canvas = await html2canvas(element, {
-    scale: 2.2,
-    useCORS: true,
-    logging: false,
-    backgroundColor: '#ffffff',
-    windowWidth: element.scrollWidth,
-  });
+  // 1. Beri sedikit waktu agar layout React selesai dirender
+  await new Promise((resolve) => setTimeout(resolve, 300));
 
-  const imgData = canvas.toDataURL('image/jpeg', 0.95);
+  try {
+    // 2. Render ke Canvas
+    const canvas = await html2canvas(element, {
+      scale: 2, // Kualitas HD
+      useCORS: true,
+      logging: false, // Matikan log agar console bersih
+      backgroundColor: "#ffffff",
+      // JANGAN gunakan windowWidth yang memaksa, biarkan html2canvas membaca ukuran asli elemen
+      width: element.scrollWidth,
+      height: element.scrollHeight,
+      windowWidth: 1200, // Paksa render seolah-olah layar desktop lebar
+    });
 
-  // A4 dimensions in mm: 210 x 297
-  const pdf = new jsPDF({
-    orientation: 'portrait',
-    unit: 'mm',
-    format: 'a4',
-  });
-
-  const pdfWidth = pdf.internal.pageSize.getWidth();
-  const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-
-  // If height exceeds A4, add pages or fit
-  if (pdfHeight <= pdf.internal.pageSize.getHeight()) {
-    pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
-  } else {
-    // Multi-page slicing if invoice is very long
-    let heightLeft = pdfHeight;
-    let position = 0;
-    const pageHeight = pdf.internal.pageSize.getHeight();
-
-    pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, pdfHeight);
-    heightLeft -= pageHeight;
-
-    while (heightLeft > 0) {
-      position = position - pageHeight;
-      pdf.addPage();
-      pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, pdfHeight);
-      heightLeft -= pageHeight;
+    if (canvas.width === 0 || canvas.height === 0) {
+      throw new Error(
+        "Elemen invoice tidak memiliki ukuran (0x0). Pastikan elemen terlihat di layar saat PDF dibuat.",
+      );
     }
+
+    const imgData = canvas.toDataURL("image/jpeg", 0.95);
+
+    const pdf = new jsPDF({
+      orientation: "portrait",
+      unit: "mm",
+      format: "a4",
+    });
+
+    const pdfWidth = pdf.internal.pageSize.getWidth();
+    const pdfHeight = pdf.internal.pageSize.getHeight();
+
+    // Hitung tinggi gambar proporsional
+    const imgHeight = (canvas.height * pdfWidth) / canvas.width;
+
+    let heightLeft = imgHeight;
+    let position = 0;
+
+    // Halaman pertama
+    pdf.addImage(imgData, "JPEG", 0, position, pdfWidth, imgHeight);
+    heightLeft -= pdfHeight;
+
+    // Halaman berikutnya (jika ada)
+    while (heightLeft > 0) {
+      position -= pdfHeight;
+      pdf.addPage();
+      pdf.addImage(imgData, "JPEG", 0, position, pdfWidth, imgHeight);
+      heightLeft -= pdfHeight;
+    }
+
+    const base64DataUri = pdf.output("datauristring");
+    const blob = pdf.output("blob");
+
+    return {
+      fileName,
+      base64DataUri,
+      blob,
+    };
+  } catch (error: any) {
+    console.error("Error generate PDF:", error);
+    throw new Error(
+      `Gagal membuat PDF: ${error.message || "Terjadi kesalahan pada html2canvas."}`,
+    );
   }
-
-  const base64DataUri = pdf.output('datauristring');
-  const blob = pdf.output('blob');
-
-  return {
-    fileName,
-    base64DataUri,
-    blob,
-  };
 }
 
 /**
  * Triggers direct browser file download of the PDF
  */
-export async function downloadInvoicePdf(elementId: string, fileName: string): Promise<void> {
+export async function downloadInvoicePdf(
+  elementId: string,
+  fileName: string,
+): Promise<void> {
   const result = await generateInvoicePdf(elementId, fileName);
-  const link = document.createElement('a');
+  const link = document.createElement("a");
   link.href = URL.createObjectURL(result.blob);
-  link.download = fileName.endsWith('.pdf') ? fileName : `${fileName}.pdf`;
+  link.download = fileName.endsWith(".pdf") ? fileName : `${fileName}.pdf`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
