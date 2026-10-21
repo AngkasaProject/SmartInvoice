@@ -27,9 +27,15 @@ import { WhatsAppSendModal } from "./components/WhatsAppSendModal";
 import { SettingsView } from "./components/SettingsView";
 import { PostSaveActionModal } from "./components/PostSaveActionModal";
 import { InvoicePrintable } from "./components/InvoicePrintable";
+import { AuthPage } from "./components/auth/AuthPage"; // Import AuthPage
 import { Toaster, toast } from "sonner";
 
 export default function App() {
+  // State Autentikasi
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    return Boolean(localStorage.getItem("smartinvoice_auth"));
+  });
+
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [business, setBusiness] = useState<BusinessProfile>(
     defaultBusinessProfile,
@@ -46,7 +52,7 @@ export default function App() {
     useState<Invoice | null>(null);
   const [postSaveInvoice, setPostSaveInvoice] = useState<Invoice | null>(null);
 
-  // Load invoices from active database
+  // Load data dari database
   const refreshInvoices = async () => {
     try {
       const data = await fetchAllInvoices();
@@ -58,12 +64,30 @@ export default function App() {
   };
 
   useEffect(() => {
-    refreshInvoices();
-    fetchBusinessProfile().then((p) => setBusiness(p));
-    fetchOpenWaConfig().then((cfg) => setOpenWaConfig(cfg));
-  }, []);
+    // Hanya load data jika sudah login
+    if (isAuthenticated) {
+      refreshInvoices();
+      fetchBusinessProfile().then((p) => setBusiness(p));
+      fetchOpenWaConfig().then((cfg) => setOpenWaConfig(cfg));
+    }
+  }, [isAuthenticated]);
 
-  // Save changes to active database
+  // ==========================================
+  // JIKA BELUM LOGIN, TAMPILKAN HALAMAN AUTH
+  // ==========================================
+  if (!isAuthenticated) {
+    return (
+      <>
+        <Toaster richColors position="top-right" closeButton expand={false} />
+        <AuthPage onLoginSuccess={() => setIsAuthenticated(true)} />
+      </>
+    );
+  }
+
+  // ==========================================
+  // JIKA SUDAH LOGIN, TAMPILKAN APLIKASI
+  // ==========================================
+
   const handleSaveInvoice = async (
     invoiceToSave: Invoice,
     isEditing: boolean,
@@ -78,21 +102,20 @@ export default function App() {
 
       if (isEditing) {
         toast.success(
-          `Invoice ${invoiceToSave.invoiceNumber} berhasil diperbarui di database!`,
+          `Invoice ${invoiceToSave.invoiceNumber} berhasil diperbarui!`,
           {
             description: `Customer: ${invoiceToSave.client.name} • ${invoiceToSave.client.phone}`,
           },
         );
       } else {
         toast.success(
-          `Invoice ${invoiceToSave.invoiceNumber} berhasil dibuat di database!`,
+          `Invoice ${invoiceToSave.invoiceNumber} berhasil dibuat!`,
           {
             description: `Customer: ${invoiceToSave.client.name} • ${invoiceToSave.client.phone}`,
           },
         );
       }
 
-      // Display the post-save popup (allows instant PDF download or WhatsApp send)
       setPostSaveInvoice(invoiceToSave);
     } catch (err: any) {
       toast.error("Gagal menyimpan invoice: " + err.message);
@@ -115,7 +138,7 @@ export default function App() {
 
     if (isNowPaid) {
       toast.success(`Invoice ${invoice.invoiceNumber} ditandai LUNAS!`, {
-        description: `Pembayaran sebesar Rp ${invoice.total.toLocaleString("id-ID")} telah disimpan di database.`,
+        description: `Pembayaran sebesar Rp ${invoice.total.toLocaleString("id-ID")} telah disimpan.`,
       });
     } else {
       toast.info(
@@ -133,7 +156,7 @@ export default function App() {
       await deleteInvoiceRecord(id);
       const updated = await fetchAllInvoices();
       setInvoices(updated);
-      toast.success("Invoice berhasil dihapus dari database.");
+      toast.success("Invoice berhasil dihapus.");
       if (detailInvoice && detailInvoice.id === id) {
         setDetailInvoice(null);
       }
@@ -162,7 +185,7 @@ export default function App() {
     setInvoices(updated);
     setEditingInvoice(cloned);
     setCurrentView("edit");
-    toast.info(`Invoice digandakan sebagai ${newNum}. Mode edit dibuka.`);
+    toast.info(`Invoice digandakan sebagai ${newNum}.`);
   };
 
   const handleOpenEdit = (invoice: Invoice) => {
@@ -184,7 +207,7 @@ export default function App() {
       setDetailInvoice(updatedInvoice);
     }
     setWhatsAppModalInvoice(updatedInvoice);
-    toast.success(`PDF berhasil dikirim ke nomor WhatsApp customer!`);
+    toast.success(`PDF berhasil dikirim ke WhatsApp customer!`);
   };
 
   const handleSaveBusinessProfile = async (profile: BusinessProfile) => {
@@ -222,7 +245,12 @@ export default function App() {
     await refreshInvoices();
   };
 
-  // Tentukan invoice mana yang akan dirender tersembunyi untuk PDF
+  const handleLogout = () => {
+    localStorage.removeItem("smartinvoice_auth");
+    setIsAuthenticated(false);
+    toast.info("Anda telah logout.");
+  };
+
   const activePrintInvoice =
     postSaveInvoice ||
     whatsAppModalInvoice ||
@@ -231,10 +259,8 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900">
-      {/* Toast Notification Container (Sonner) */}
       <Toaster richColors position="top-right" closeButton expand={false} />
 
-      {/* Top Clean & Functional Navbar */}
       <Navbar
         currentView={currentView === "edit" ? "create" : currentView}
         onChangeView={(view) => {
@@ -244,9 +270,9 @@ export default function App() {
           setCurrentView(view);
         }}
         business={business}
+        onLogout={handleLogout} // <-- Tambahkan prop onLogout
       />
 
-      {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-8 pb-24 md:pb-8">
         {currentView === "dashboard" && (
           <DashboardView
@@ -304,7 +330,6 @@ export default function App() {
         )}
       </main>
 
-      {/* Post-Save Modal (Download PDF vs Kirim WhatsApp Customer) */}
       <PostSaveActionModal
         invoice={postSaveInvoice}
         isOpen={Boolean(postSaveInvoice)}
@@ -320,7 +345,6 @@ export default function App() {
         }}
       />
 
-      {/* Detail / Full PDF Preview Modal */}
       <InvoiceDetailModal
         invoice={detailInvoice}
         business={business}
@@ -334,7 +358,6 @@ export default function App() {
         onDuplicate={handleDuplicateInvoice}
       />
 
-      {/* WhatsApp Dispatch Modal with Real OpenWA API Execution */}
       {whatsAppModalInvoice && (
         <WhatsAppSendModal
           invoice={whatsAppModalInvoice}
@@ -350,23 +373,19 @@ export default function App() {
         />
       )}
 
-      {/* 
-        Hidden print render node 
-        PERBAIKAN: Menggunakan position absolute kiri -9999px agar html2canvas bisa memotretnya
-      */}
       <div
         style={{
           position: "absolute",
           left: "-9999px",
           top: 0,
-          width: "820px", // Paksa lebar agar sesuai A4
+          width: "820px",
           zIndex: -1,
         }}
         aria-hidden="true"
       >
         {activePrintInvoice && (
           <InvoicePrintable
-            id="printable-invoice-element" // ID ini yang dicari oleh pdfGenerator
+            id="printable-invoice-element"
             invoice={activePrintInvoice}
             business={business}
             documentType="invoice"

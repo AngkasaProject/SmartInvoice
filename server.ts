@@ -12,15 +12,16 @@ import {
   deleteInvoice,
   getSetting,
   saveSetting,
+  checkAdminExists, // Import fungsi auth
+  createAdminUser, // Import fungsi auth
+  getAdminUser, // Import fungsi auth
 } from "./server/db.ts";
 
-// Import getWhatsAppEnvConfig dari config.ts
 import {
   getDatabaseConfig,
   saveDatabaseConfig,
   getWhatsAppEnvConfig,
 } from "./server/config.ts";
-
 import { uploadImage } from "./server/storage.ts";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -30,46 +31,128 @@ async function startServer() {
   const app = express();
   const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
-  // Pastikan folder uploads ada di lokal
   const UPLOADS_DIR = path.resolve(process.cwd(), "data", "uploads");
   if (!fs.existsSync(UPLOADS_DIR)) {
     fs.mkdirSync(UPLOADS_DIR, { recursive: true });
   }
 
-  // Serve static uploaded files (jika menggunakan local disk)
   app.use("/uploads", express.static(UPLOADS_DIR));
-
-  // Increase payload limit to handle base64 PDFs & images
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
   // ==========================================
-  // IMAGE UPLOAD & DELETE ENDPOINTS
+  // AUTH ENDPOINTS
+  // ==========================================
+  app.get("/api/auth/status", async (req, res) => {
+    try {
+      const hasAdmin = await checkAdminExists();
+      const isDbActive =
+        Boolean(process.env.SUPABASE_URL) ||
+        fs.existsSync(path.join(process.cwd(), "data", "smartinvoice.db"));
+
+      // Mode anonim jika tidak ada Supabase, tidak ada file SQLite, dan belum ada user
+      const isAnonymous = !isDbActive && !hasAdmin;
+
+      res.json({ success: true, hasAdmin, isAnonymous });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  app.post("/api/auth/setup", async (req, res) => {
+    try {
+      const { username, password } = req.body;
+      if (await checkAdminExists()) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Admin sudah ada." });
+      }
+
+      // Hash password (Bun native)
+      const passwordHash = await Bun.password.hash(password, {
+        algorithm: "bcrypt",
+        cost: 10,
+      });
+
+      const newUser = {
+        id: `user_${Date.now()}`,
+        username,
+        password_hash: passwordHash,
+        role: "admin",
+        created_at: new Date().toISOString(),
+      };
+
+      await createAdminUser(newUser);
+      res.json({ success: true, message: "Admin berhasil dibuat." });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  app.post("/api/auth/login", async (req, res) => {
+    try {
+      const { username, password } = req.body;
+
+      // DEBUG 1: Lihat data yang dikirim frontend
+      console.log("=== LOGIN ATTEMPT ===");
+      console.log("Username:", username);
+      console.log("Password length:", password?.length);
+
+      const user = await getAdminUser(username);
+
+      // DEBUG 2: Lihat apakah user ditemukan
+      console.log("User found:", user ? user.username : "TIDAK ADA");
+      console.log("Stored Hash:", user?.password_hash);
+
+      if (!user) {
+        return res
+          .status(401)
+          .json({ success: false, message: "User tidak ditemukan." });
+      }
+
+      // DEBUG 3: Coba verifikasi
+      const isMatch = await Bun.password.verify(password, user.password_hash);
+      console.log("Password match:", isMatch);
+
+      if (!isMatch) {
+        return res
+          .status(401)
+          .json({ success: false, message: "Password salah." });
+      }
+
+      res.json({
+        success: true,
+        token: `auth_${Date.now()}`,
+        user: { username: user.username },
+      });
+    } catch (err: any) {
+      console.error("Login Error:", err);
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // ==========================================
+  // IMAGE UPLOAD & DELETE
   // ==========================================
   app.post("/api/upload", async (req, res) => {
     try {
       const { image, filename } = req.body;
-      if (!image) {
-        return res.status(400).json({
-          success: false,
-          message: "Tidak ada data gambar yang dikirim.",
-        });
-      }
+      if (!image)
+        return res
+          .status(400)
+          .json({ success: false, message: "Tidak ada data gambar." });
 
       const result = await uploadImage(image, filename || "upload.png");
-
-      if (result.success) {
+      if (result.success)
         return res.json({
           success: true,
           message: "Gambar berhasil diunggah",
           url: result.url,
         });
-      } else {
-        return res.status(500).json({
-          success: false,
-          message: "Gagal mengunggah gambar: " + result.message,
-        });
-      }
+      return res.status(500).json({
+        success: false,
+        message: "Gagal mengunggah gambar: " + result.message,
+      });
     } catch (err: any) {
       return res.status(500).json({
         success: false,
@@ -83,7 +166,6 @@ async function startServer() {
       const { fileUrl } = req.body;
       if (!fileUrl) return res.json({ success: true });
 
-      // 1. Hapus File Lokal
       if (fileUrl.startsWith("/uploads/")) {
         const filename = fileUrl.replace("/uploads/", "");
         const filePath = path.join(UPLOADS_DIR, filename);
@@ -93,7 +175,6 @@ async function startServer() {
         }
       }
 
-      // 2. Hapus File di Supabase
       if (fileUrl.includes("supabase.co")) {
         const config = getDatabaseConfig();
         if (config.supabase.url && config.supabase.anonKey) {
@@ -101,22 +182,16 @@ async function startServer() {
             config.supabase.url,
             config.supabase.anonKey,
           );
-
           const match = fileUrl.match(/\/([^/]+\/[^/]+)$/);
           const filePathInBucket = match ? match[1] : "";
 
           if (filePathInBucket) {
             const bucketName =
               process.env.SUPABASE_STORAGE_BUCKET || "smartinvoice-assets";
-            console.log(
-              `[Delete] Menghapus ${filePathInBucket} dari bucket ${bucketName}`,
-            );
-
             const { error } = await supabase.storage
               .from(bucketName)
               .remove([filePathInBucket]);
             if (error) throw error;
-
             return res.json({
               success: true,
               message: "File Supabase dihapus",
@@ -124,18 +199,15 @@ async function startServer() {
           }
         }
       }
-
       return res.json({ success: true });
     } catch (err: any) {
-      console.error("[Delete] Error:", err.message);
       return res.status(500).json({ success: false, message: err.message });
     }
   });
 
   // ==========================================
-  // DATABASE MANAGEMENT ENDPOINTS
+  // DATABASE CONFIG ENDPOINTS
   // ==========================================
-
   app.get("/api/db/config", (req, res) => {
     try {
       const config = getDatabaseConfig();
@@ -152,7 +224,7 @@ async function startServer() {
       res.json({
         success: true,
         config: updated,
-        message: "Konfigurasi database server berhasil disimpan",
+        message: "Konfigurasi disimpan",
       });
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
@@ -179,7 +251,9 @@ async function startServer() {
     }
   });
 
-  // 5. Invoices CRUD Endpoints
+  // ==========================================
+  // INVOICES CRUD
+  // ==========================================
   app.get("/api/invoices", async (req, res) => {
     try {
       const invoices = await getAllInvoices();
@@ -192,10 +266,7 @@ async function startServer() {
   app.post("/api/invoices", async (req, res) => {
     try {
       await saveInvoice(req.body);
-      res.json({
-        success: true,
-        message: "Invoice berhasil disimpan ke database",
-      });
+      res.json({ success: true, message: "Invoice disimpan" });
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
     }
@@ -204,28 +275,23 @@ async function startServer() {
   app.delete("/api/invoices/:id", async (req, res) => {
     try {
       await deleteInvoice(req.params.id);
-      res.json({
-        success: true,
-        message: "Invoice berhasil dihapus dari database",
-      });
+      res.json({ success: true, message: "Invoice dihapus" });
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
     }
   });
 
-  // 6. Settings KV Endpoints (DENGAN LOGIKA HYBRID ENV)
+  // ==========================================
+  // SETTINGS KV
+  // ==========================================
   app.get("/api/settings/:key", async (req, res) => {
     try {
       const key = req.params.key;
-
-      // Jika minta WA Config dan ENV terisi, kembalikan dari ENV
       if (key === "openwa_config") {
         const envWa = getWhatsAppEnvConfig();
-        if (envWa) {
+        if (envWa)
           return res.json({ success: true, value: envWa, isEnvLocked: true });
-        }
       }
-
       const value = await getSetting(key, null);
       res.json({ success: true, value, isEnvLocked: false });
     } catch (err: any) {
@@ -236,35 +302,27 @@ async function startServer() {
   app.post("/api/settings/:key", async (req, res) => {
     try {
       const key = req.params.key;
-
-      // Tolak simpan jika ENV terisi untuk WA Config
       if (key === "openwa_config" && getWhatsAppEnvConfig()) {
-        return res.status(403).json({
-          success: false,
-          message: "Konfigurasi WhatsApp dikunci oleh Environment Variable.",
-        });
+        return res
+          .status(403)
+          .json({ success: false, message: "Dikunci oleh ENV." });
       }
-
       await saveSetting(key, req.body.value);
-      res.json({
-        success: true,
-        message: `Pengaturan ${key} berhasil disimpan ke database`,
-      });
+      res.json({ success: true, message: `Pengaturan ${key} disimpan` });
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
     }
   });
 
   // ==========================================
-  // OPENWA PROXY ENDPOINTS
+  // OPENWA PROXY
   // ==========================================
   app.post("/api/openwa/test", async (req, res) => {
     const { serverUrl, apiKey } = req.body;
-    if (!serverUrl) {
+    if (!serverUrl)
       return res
         .status(400)
-        .json({ success: false, message: "URL Server OpenWA belum diisi" });
-    }
+        .json({ success: false, message: "URL belum diisi" });
 
     const cleanUrl = serverUrl.replace(/\/+$/, "");
     const startTime = Date.now();
@@ -286,9 +344,9 @@ async function startServer() {
         "/session/status",
         "",
       ];
-      let lastError = null;
       let connected = false;
       let responseData = null;
+      let lastError = null;
 
       for (const ep of testEndpoints) {
         try {
@@ -321,25 +379,22 @@ async function startServer() {
       }
 
       const latencyMs = Date.now() - startTime;
-      if (connected) {
+      if (connected)
         return res.json({
           success: true,
-          message: `Terhubung dengan OpenWA server (${latencyMs}ms)`,
+          message: `Terhubung (${latencyMs}ms)`,
           latencyMs,
           data: responseData,
         });
-      }
-
       return res.json({
         success: false,
-        message: `Tidak dapat menghubungi OpenWA di ${cleanUrl}. Pastikan server OpenWA aktif. (${lastError || "Timeout"})`,
+        message: `Gagal (${lastError || "Timeout"})`,
         latencyMs,
       });
     } catch (err: any) {
-      return res.status(500).json({
-        success: false,
-        message: err?.message || "Gagal menghubungi server OpenWA",
-      });
+      return res
+        .status(500)
+        .json({ success: false, message: err?.message || "Gagal" });
     }
   });
 
@@ -355,21 +410,14 @@ async function startServer() {
       filename,
       caption,
     } = req.body;
-
     if (!serverUrl)
       return res
         .status(400)
-        .json({
-          success: false,
-          message: "Server URL OpenWA belum ditentukan",
-        });
+        .json({ success: false, message: "URL belum ditentukan" });
     if (!chatId && !phone)
       return res
         .status(400)
-        .json({
-          success: false,
-          message: "Nomor WhatsApp penerima belum diisi",
-        });
+        .json({ success: false, message: "Nomor belum diisi" });
 
     const cleanUrl = serverUrl.replace(/\/+$/, "");
     const cleanPhone = (phone || chatId || "").replace(/\D/g, "");
@@ -419,15 +467,13 @@ async function startServer() {
         try {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 15000);
-          const fullTargetUrl = `${cleanUrl}${targetPath}`;
-          const response = await fetch(fullTargetUrl, {
+          const response = await fetch(`${cleanUrl}${targetPath}`, {
             method: "POST",
             headers,
             body: JSON.stringify(payload),
             signal: controller.signal,
           });
           clearTimeout(timeout);
-
           let resJson;
           try {
             resJson = await response.json();
@@ -448,39 +494,31 @@ async function startServer() {
         }
       }
 
-      if (finalResponse && !lastErrorMessage) {
+      if (finalResponse && !lastErrorMessage)
         return res.json({
           success: true,
-          message: "Invoice PDF berhasil dikirim via OpenWA!",
+          message: "Berhasil dikirim",
           data: finalResponse,
         });
-      }
       return res.json({
         success: !lastErrorMessage,
-        message: lastErrorMessage
-          ? `Gagal mengirim via OpenWA: ${lastErrorMessage}`
-          : "Terkirim ke OpenWA",
+        message: lastErrorMessage ? `Gagal: ${lastErrorMessage}` : "Terkirim",
         data: finalResponse,
       });
     } catch (err: any) {
       return res
         .status(500)
-        .json({
-          success: false,
-          message: err.message || "Kesalahan internal proxy OpenWA",
-        });
+        .json({ success: false, message: err.message || "Kesalahan internal" });
     }
   });
 
   // ==========================================
-  // FONNTE PROXY ENDPOINTS
+  // FONNTE PROXY
   // ==========================================
   app.post("/api/fonnte/test", async (req, res) => {
     const { token } = req.body;
     if (!token || !token.trim())
-      return res
-        .status(400)
-        .json({ success: false, message: "Token Fonnte belum diisi." });
+      return res.status(400).json({ success: false, message: "Token kosong" });
 
     const startTime = Date.now();
     try {
@@ -498,55 +536,41 @@ async function startServer() {
 
       if (data.status === true) {
         const deviceStatus = data.device_status || "connect";
-        if (deviceStatus === "connect") {
+        if (deviceStatus === "connect")
           return res.json({
             success: true,
-            message: `Terhubung dengan Fonnte (${latencyMs}ms) - Perangkat: ${data.name || data.device || "Online"}!`,
+            message: `Terhubung (${latencyMs}ms)`,
             latencyMs,
             data,
           });
-        } else {
-          return res.json({
-            success: false,
-            message: `Akun Fonnte terdaftar, namun status perangkat '${deviceStatus}'. Pastikan WhatsApp sudah terhubung di dashboard Fonnte.`,
-            latencyMs,
-            data,
-          });
-        }
+        return res.json({
+          success: false,
+          message: `Status: '${deviceStatus}'`,
+          latencyMs,
+          data,
+        });
       }
       return res.json({
         success: false,
-        message:
-          data.reason ||
-          data.message ||
-          "Token Fonnte tidak valid atau perangkat terputus.",
+        message: data.reason || data.message || "Token invalid",
         latencyMs,
         data,
       });
     } catch (err: any) {
-      return res
-        .status(500)
-        .json({
-          success: false,
-          message: "Gagal menghubungi server Fonnte: " + err.message,
-          latencyMs: Date.now() - startTime,
-        });
+      return res.status(500).json({
+        success: false,
+        message: err.message,
+        latencyMs: Date.now() - startTime,
+      });
     }
   });
 
   app.post("/api/fonnte/send", async (req, res) => {
     const { token, target, file, filename, caption } = req.body;
     if (!token)
-      return res
-        .status(400)
-        .json({ success: false, message: "Token Fonnte wajib diisi." });
+      return res.status(400).json({ success: false, message: "Token kosong" });
     if (!target)
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "Nomor WhatsApp penerima wajib diisi.",
-        });
+      return res.status(400).json({ success: false, message: "Target kosong" });
 
     let cleanTarget = target.replace(/\D/g, "");
     if (cleanTarget.startsWith("0")) cleanTarget = "62" + cleanTarget.slice(1);
@@ -558,7 +582,6 @@ async function startServer() {
         target: cleanTarget,
         message: caption || "",
       };
-
       if (file) {
         payload.url = file.startsWith("data:")
           ? file
@@ -576,33 +599,22 @@ async function startServer() {
         signal: controller.signal,
       });
       clearTimeout(timeout);
-
       const data: any = await response.json();
-      if (data.status === true) {
-        return res.json({
-          success: true,
-          message: "Invoice PDF berhasil dikirim via Fonnte!",
-          data,
-        });
-      }
+
+      if (data.status === true)
+        return res.json({ success: true, message: "Berhasil dikirim", data });
       return res.json({
         success: false,
-        message:
-          data.reason || data.message || "Gagal mengirim pesan via Fonnte.",
+        message: data.reason || data.message || "Gagal",
         data,
       });
     } catch (err: any) {
-      return res
-        .status(500)
-        .json({
-          success: false,
-          message: "Gagal mengirim pesan via Fonnte: " + err.message,
-        });
+      return res.status(500).json({ success: false, message: err.message });
     }
   });
 
   // ==========================================
-  // STORE WEBHOOK ORDER INGESTION
+  // STORE WEBHOOK
   // ==========================================
   const handleStoreOrder = async (
     req: express.Request,
@@ -623,23 +635,14 @@ async function startServer() {
       if (!customer || !customer.name || !customer.phone)
         return res
           .status(400)
-          .json({
-            success: false,
-            message: "Data customer (nama dan nomor WhatsApp) wajib diisi.",
-          });
+          .json({ success: false, message: "Data customer kurang" });
       if (!Array.isArray(items) || items.length === 0)
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message: "Daftar item pesanan toko tidak boleh kosong.",
-          });
+        return res.status(400).json({ success: false, message: "Item kosong" });
 
       const today = new Date().toISOString().split("T")[0];
       const dueDateObj = new Date();
       dueDateObj.setDate(dueDateObj.getDate() + 7);
       const dueDate = dueDateObj.toISOString().split("T")[0];
-
       const cleanOrderId = (orderId || `${Date.now()}`).replace(
         /[^a-zA-Z0-9-]/g,
         "",
@@ -651,7 +654,7 @@ async function startServer() {
         const price = parseFloat(item.unitPrice || item.price) || 0;
         return {
           id: `item_store_${Date.now()}_${idx}`,
-          name: item.name || "Barang Pesanan",
+          name: item.name || "Barang",
           description: item.description || "",
           quantity: qty,
           unit: item.unit || "Pcs",
@@ -695,10 +698,8 @@ async function startServer() {
         taxAmount,
         shippingFee: shipVal,
         total,
-        notes:
-          notes || `Pesanan otomatis dari Toko Online (Order #${cleanOrderId})`,
-        terms:
-          "Pembayaran tagihan pesanan online. Hubungi kontak resmi jika butuh bantuan.",
+        notes: notes || `Pesanan dari Toko Online (Order #${cleanOrderId})`,
+        terms: "Pembayaran tagihan pesanan online.",
         paidAt: status === "paid" ? new Date().toISOString() : undefined,
         paidMethod: status === "paid" ? "Online Payment Gateway" : undefined,
         whatsappStatus: "not_sent" as const,
@@ -707,33 +708,27 @@ async function startServer() {
       };
 
       await saveInvoice(newInvoice);
-
       return res.status(201).json({
         success: true,
-        message:
-          "Pesanan toko berhasil diproses menjadi Invoice resmi di database!",
+        message: "Pesanan diproses",
         invoiceNumber,
         invoice: newInvoice,
       });
     } catch (err: any) {
-      return res
-        .status(500)
-        .json({
-          success: false,
-          message: "Gagal memproses pesanan toko: " + err.message,
-        });
+      return res.status(500).json({ success: false, message: err.message });
     }
   };
 
   app.post("/api/orders/webhook", handleStoreOrder);
   app.post("/api/invoices/create-from-order", handleStoreOrder);
 
-  // Check health
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", time: new Date().toISOString() });
   });
 
-  // Mount Vite middleware in development
+  // ==========================================
+  // VITE MIDDLEWARE (DEV) / STATIC (PROD)
+  // ==========================================
   const isProd = process.env.NODE_ENV === "production";
   if (!isProd) {
     const vite = await createViteServer({

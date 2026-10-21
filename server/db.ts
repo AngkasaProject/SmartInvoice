@@ -420,3 +420,43 @@ function mapSupabaseInvoiceToApp(row: any): any {
     updatedAt: row.updated_at,
   };
 }
+
+// ==========================================
+// USERS CRUD (AUTH)
+// ==========================================
+const USERS_PATH = path.join(DATA_DIR, "users.json");
+
+export async function checkAdminExists(): Promise<boolean> {
+  if (isSupabaseActive()) {
+    const { count } = await getSupabase()
+      .from("users")
+      .select("*", { count: "exact", head: true });
+    return (count || 0) > 0;
+  }
+  const users = readJsonArray(USERS_PATH);
+  return users.length > 0;
+}
+
+export async function createAdminUser(user: any): Promise<void> {
+  if (isSupabaseActive()) {
+    const { error } = await getSupabase().from("users").insert(user);
+    if (error) throw error;
+    return;
+  }
+  const users = readJsonArray(USERS_PATH);
+  users.push(user);
+  writeJsonArray(USERS_PATH, users);
+}
+
+export async function getAdminUser(username: string): Promise<any> {
+  if (isSupabaseActive()) {
+    const { data } = await getSupabase()
+      .from("users")
+      .select("*")
+      .eq("username", username)
+      .single();
+    return data;
+  }
+  const users = readJsonArray(USERS_PATH);
+  return users.find((u: any) => u.username === username);
+}

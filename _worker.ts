@@ -1,6 +1,6 @@
 /**
  * Cloudflare Workers Edge Entry Point
- * Terintegrasi dengan Supabase, mendukung ENV Lock untuk WA & Database
+ * Terintegrasi dengan Supabase, mendukung ENV Lock & Auth
  */
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
@@ -47,6 +47,14 @@ function getWhatsAppEnvConfig(env: Env) {
   };
 }
 
+// Helper Hashing (SHA-256) untuk Cloudflare Workers
+async function hashPassword(password: string): Promise<string> {
+  const msgBuffer = new TextEncoder().encode(password);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", msgBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -64,12 +72,111 @@ export default {
 
     try {
       // ==========================================
-      // 1. ENDPOINT DB CONFIG (DINAMIS)
+      // 1. AUTH ENDPOINTS
+      // ==========================================
+      if (url.pathname === "/api/auth/status" && request.method === "GET") {
+        const supabase = getSupabase(env);
+        const { count } = await supabase
+          .from("users")
+          .select("*", { count: "exact", head: true });
+        const hasAdmin = (count || 0) > 0;
+
+        // Di Workers, kita selalu pakai Supabase, jadi isAnonymous = false
+        return new Response(
+          JSON.stringify({ success: true, hasAdmin, isAnonymous: false }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          },
+        );
+      }
+
+      if (url.pathname === "/api/auth/setup" && request.method === "POST") {
+        const supabase = getSupabase(env);
+        const { count } = await supabase
+          .from("users")
+          .select("*", { count: "exact", head: true });
+
+        if ((count || 0) > 0) {
+          return new Response(
+            JSON.stringify({ success: false, message: "Admin sudah ada." }),
+            {
+              status: 400,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            },
+          );
+        }
+
+        const body: any = await request.json();
+        const passwordHash = await hashPassword(body.password);
+
+        const newUser = {
+          id: `user_${Date.now()}`,
+          username: body.username,
+          password_hash: passwordHash,
+          role: "admin",
+        };
+
+        const { error } = await supabase.from("users").insert(newUser);
+        if (error) throw error;
+
+        return new Response(
+          JSON.stringify({ success: true, message: "Admin dibuat." }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          },
+        );
+      }
+
+      if (url.pathname === "/api/auth/login" && request.method === "POST") {
+        const supabase = getSupabase(env);
+        const body: any = await request.json();
+
+        const { data: user } = await supabase
+          .from("users")
+          .select("*")
+          .eq("username", body.username)
+          .single();
+        if (!user) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              message: "User tidak ditemukan.",
+            }),
+            {
+              status: 401,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            },
+          );
+        }
+
+        const passwordHash = await hashPassword(body.password);
+        if (passwordHash !== user.password_hash) {
+          return new Response(
+            JSON.stringify({ success: false, message: "Password salah." }),
+            {
+              status: 401,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            },
+          );
+        }
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            token: `auth_${Date.now()}`,
+            user: { username: user.username },
+          }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          },
+        );
+      }
+
+      // ==========================================
+      // 2. ENDPOINT DB CONFIG
       // ==========================================
       if (url.pathname === "/api/db/config" && request.method === "GET") {
-        // Cek apakah variabel ENV benar-benar terisi
         const isLocked = Boolean(env.SUPABASE_URL && env.SUPABASE_ANON_KEY);
-
         const config = {
           activeDriver: "supabase",
           sqlite: { filePath: "" },
@@ -81,11 +188,7 @@ export default {
         };
 
         return new Response(
-          JSON.stringify({
-            success: true,
-            config: config,
-            isEnvLocked: isLocked, // <-- Dinamis
-          }),
+          JSON.stringify({ success: true, config, isEnvLocked: isLocked }),
           {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           },
@@ -93,7 +196,7 @@ export default {
       }
 
       // ==========================================
-      // 2. ENDPOINT INVOICES
+      // 3. ENDPOINT INVOICES
       // ==========================================
       if (url.pathname === "/api/invoices" && request.method === "GET") {
         const supabase = getSupabase(env);
@@ -142,7 +245,7 @@ export default {
       }
 
       if (url.pathname === "/api/invoices" && request.method === "POST") {
-        const body = await request.json();
+        const body: any = await request.json();
         const supabase = getSupabase(env);
 
         const row = {
@@ -192,12 +295,11 @@ export default {
       }
 
       // ==========================================
-      // 3. ENDPOINT SETTINGS (Profil & WA Config)
+      // 4. ENDPOINT SETTINGS
       // ==========================================
       if (url.pathname.startsWith("/api/settings/")) {
         const key = url.pathname.replace("/api/settings/", "");
 
-        // LOGIKA HYBRID UNTUK WA CONFIG
         if (key === "openwa_config" && getWhatsAppEnvConfig(env)) {
           if (request.method === "GET") {
             return new Response(
@@ -213,11 +315,7 @@ export default {
           }
           if (request.method === "POST") {
             return new Response(
-              JSON.stringify({
-                success: false,
-                message:
-                  "Konfigurasi WhatsApp dikunci oleh Environment Variable.",
-              }),
+              JSON.stringify({ success: false, message: "Dikunci oleh ENV." }),
               {
                 status: 403,
                 headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -226,7 +324,6 @@ export default {
           }
         }
 
-        // LOGIKA NORMAL UNTUK PROFIL USAHA (Business Profile)
         const supabase = getSupabase(env);
 
         if (request.method === "GET") {
@@ -249,7 +346,7 @@ export default {
         }
 
         if (request.method === "POST") {
-          const body = await request.json();
+          const body: any = await request.json();
           const { error } = await supabase
             .from("settings")
             .upsert(
@@ -264,7 +361,7 @@ export default {
       }
 
       // ==========================================
-      // 4. ENDPOINT OPENWA SEND (Proxy)
+      // 5. ENDPOINT OPENWA SEND (Proxy Placeholder)
       // ==========================================
       if (url.pathname === "/api/openwa/send" && request.method === "POST") {
         return new Response(
@@ -280,7 +377,7 @@ export default {
       }
 
       // ==========================================
-      // 5. STATIC ASSETS
+      // 6. STATIC ASSETS
       // ==========================================
       if (env.ASSETS) {
         return env.ASSETS.fetch(request);
