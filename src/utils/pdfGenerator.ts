@@ -28,7 +28,6 @@ export async function generateInvoicePdf(
       useCORS: true,
       logging: false, // Matikan log agar console bersih
       backgroundColor: "#ffffff",
-      // JANGAN gunakan windowWidth yang memaksa, biarkan html2canvas membaca ukuran asli elemen
       width: element.scrollWidth,
       height: element.scrollHeight,
       windowWidth: 1200, // Paksa render seolah-olah layar desktop lebar
@@ -86,18 +85,54 @@ export async function generateInvoicePdf(
 }
 
 /**
- * Triggers direct browser file download of the PDF
+ * Helper internal: memicu unduhan Blob di browser.
+ * Tahan banting untuk Chrome, Firefox, Safari, Edge, dan WebView.
+ */
+function downloadBlob(blob: Blob, fileName: string): void {
+  const safeName = fileName.toLowerCase().endsWith(".pdf")
+    ? fileName
+    : `${fileName}.pdf`;
+
+  // Fallback legacy (IE / Edge lama)
+  const nav = window.navigator as any;
+  if (typeof nav.msSaveOrOpenBlob === "function") {
+    nav.msSaveOrOpenBlob(blob, safeName);
+    return;
+  }
+  if (typeof nav.msSaveBlob === "function") {
+    nav.msSaveBlob(blob, safeName);
+    return;
+  }
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = safeName;
+  link.rel = "noopener";
+  link.style.display = "none";
+  document.body.appendChild(link);
+  link.click();
+
+  // Jangan revoke langsung — beberapa browser (Safari/WebView) butuh jeda
+  // agar proses unduhan sempat dimulai sebelum URL dihapus.
+  setTimeout(() => {
+    try {
+      document.body.removeChild(link);
+    } catch {
+      /* sudah dilepas, abaikan */
+    }
+    URL.revokeObjectURL(url);
+  }, 1500);
+}
+
+/**
+ * Membuat PDF dari elemen lalu langsung memicu unduhan di browser.
+ * Ini fungsi yang harus dipanggil oleh tombol "Unduh PDF".
  */
 export async function downloadInvoicePdf(
   elementId: string,
   fileName: string,
 ): Promise<void> {
   const result = await generateInvoicePdf(elementId, fileName);
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(result.blob);
-  link.download = fileName.endsWith(".pdf") ? fileName : `${fileName}.pdf`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(link.href);
+  downloadBlob(result.blob, result.fileName);
 }

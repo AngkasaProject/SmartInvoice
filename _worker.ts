@@ -498,6 +498,314 @@ export default {
       }
 
       // ==========================================
+      // 5b. FONNTE PROXY (parity dengan server.ts)
+      // ==========================================
+      if (url.pathname === "/api/fonnte/test" && request.method === "POST") {
+        try {
+          let body: any = {};
+          try {
+            const raw = await request.text();
+            if (raw && raw.trim()) body = JSON.parse(raw);
+          } catch {
+            return new Response(
+              JSON.stringify({
+                success: false,
+                message: "Body JSON tidak valid.",
+              }),
+              {
+                status: 400,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              },
+            );
+          }
+
+          const token = String(body.token || env.FONNTE_TOKEN || "").trim();
+          if (!token) {
+            return new Response(
+              JSON.stringify({ success: false, message: "Token kosong" }),
+              {
+                status: 400,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              },
+            );
+          }
+
+          const startTime = Date.now();
+          let upstreamRes: Response;
+          try {
+            upstreamRes = await fetch("https://api.fonnte.com/device", {
+              method: "POST",
+              headers: { Authorization: token },
+            });
+          } catch (netErr: any) {
+            return new Response(
+              JSON.stringify({
+                success: false,
+                message: netErr.message || "Gagal menghubungi Fonnte",
+                latencyMs: Date.now() - startTime,
+              }),
+              {
+                status: 200,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              },
+            );
+          }
+
+          const latencyMs = Date.now() - startTime;
+          const text = await upstreamRes.text();
+          const trimmed = text.trim();
+
+          if (!trimmed || trimmed.startsWith("<")) {
+            return new Response(
+              JSON.stringify({
+                success: false,
+                message: trimmed
+                  ? "Fonnte mengembalikan HTML, bukan JSON."
+                  : "Fonnte mengembalikan body kosong.",
+                latencyMs,
+                snippet: trimmed.slice(0, 300),
+              }),
+              {
+                status: 200,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              },
+            );
+          }
+
+          let data: any = null;
+          try {
+            data = JSON.parse(trimmed);
+          } catch {
+            return new Response(
+              JSON.stringify({
+                success: false,
+                message: "Respons Fonnte bukan JSON valid.",
+                latencyMs,
+                snippet: trimmed.slice(0, 300),
+              }),
+              {
+                status: 200,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              },
+            );
+          }
+
+          if (data?.status === true) {
+            const deviceStatus = data.device_status || "connect";
+            if (deviceStatus === "connect") {
+              return new Response(
+                JSON.stringify({
+                  success: true,
+                  message: `Terhubung (${latencyMs}ms)`,
+                  latencyMs,
+                  data,
+                }),
+                {
+                  status: 200,
+                  headers: {
+                    ...corsHeaders,
+                    "Content-Type": "application/json",
+                  },
+                },
+              );
+            }
+            return new Response(
+              JSON.stringify({
+                success: false,
+                message: `Status: '${deviceStatus}'`,
+                latencyMs,
+                data,
+              }),
+              {
+                status: 200,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              },
+            );
+          }
+
+          return new Response(
+            JSON.stringify({
+              success: false,
+              message: data?.reason || data?.message || "Token invalid",
+              latencyMs,
+              data,
+            }),
+            {
+              status: 200,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            },
+          );
+        } catch (err: any) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              message: err.message || "Kesalahan internal",
+            }),
+            {
+              status: 500,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            },
+          );
+        }
+      }
+
+      if (url.pathname === "/api/fonnte/send" && request.method === "POST") {
+        try {
+          let body: any = {};
+          try {
+            const raw = await request.text();
+            if (raw && raw.trim()) body = JSON.parse(raw);
+          } catch {
+            return new Response(
+              JSON.stringify({
+                success: false,
+                message: "Body JSON tidak valid.",
+              }),
+              {
+                status: 400,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              },
+            );
+          }
+
+          const token = String(body.token || env.FONNTE_TOKEN || "").trim();
+          const target = String(body.target || "").trim();
+          const file = body.file ? String(body.file) : "";
+          const filename = String(body.filename || "Invoice.pdf");
+          const caption = String(body.caption || "");
+
+          if (!token) {
+            return new Response(
+              JSON.stringify({ success: false, message: "Token kosong" }),
+              {
+                status: 400,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              },
+            );
+          }
+          if (!target) {
+            return new Response(
+              JSON.stringify({ success: false, message: "Target kosong" }),
+              {
+                status: 400,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              },
+            );
+          }
+
+          let cleanTarget = target.replace(/\D/g, "");
+          if (cleanTarget.startsWith("0"))
+            cleanTarget = "62" + cleanTarget.slice(1);
+
+          const payload: Record<string, any> = {
+            target: cleanTarget,
+            message: caption || "",
+          };
+          if (file) {
+            payload.url = file.startsWith("data:")
+              ? file
+              : `data:application/pdf;base64,${file}`;
+            payload.filename = filename;
+          }
+
+          let upstreamRes: Response;
+          try {
+            upstreamRes = await fetch("https://api.fonnte.com/send", {
+              method: "POST",
+              headers: {
+                Authorization: token,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(payload),
+            });
+          } catch (netErr: any) {
+            return new Response(
+              JSON.stringify({
+                success: false,
+                message: netErr.message || "Gagal menghubungi Fonnte",
+              }),
+              {
+                status: 200,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              },
+            );
+          }
+
+          const text = await upstreamRes.text();
+          const trimmed = text.trim();
+
+          if (!trimmed || trimmed.startsWith("<")) {
+            return new Response(
+              JSON.stringify({
+                success: false,
+                message: trimmed
+                  ? "Fonnte mengembalikan HTML, bukan JSON."
+                  : "Fonnte mengembalikan body kosong.",
+                snippet: trimmed.slice(0, 300),
+              }),
+              {
+                status: 200,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              },
+            );
+          }
+
+          let data: any = null;
+          try {
+            data = JSON.parse(trimmed);
+          } catch {
+            return new Response(
+              JSON.stringify({
+                success: false,
+                message: "Respons Fonnte bukan JSON valid.",
+                snippet: trimmed.slice(0, 300),
+              }),
+              {
+                status: 200,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              },
+            );
+          }
+
+          if (data?.status === true) {
+            return new Response(
+              JSON.stringify({
+                success: true,
+                message: "Berhasil dikirim",
+                data,
+              }),
+              {
+                status: 200,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              },
+            );
+          }
+          return new Response(
+            JSON.stringify({
+              success: false,
+              message: data?.reason || data?.message || "Gagal",
+              data,
+            }),
+            {
+              status: 200,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            },
+          );
+        } catch (err: any) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              message: err.message || "Kesalahan internal",
+            }),
+            {
+              status: 500,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            },
+          );
+        }
+      }
+
+      // ==========================================
       // 6. STATIC ASSETS
       // ==========================================
       if (env.ASSETS) return env.ASSETS.fetch(request);

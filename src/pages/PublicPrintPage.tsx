@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { InvoicePrintable } from "../components/InvoicePrintable";
-import { generateInvoicePdf } from "../utils/pdfGenerator";
+import { downloadInvoicePdf } from "../utils/pdfGenerator";
 import { Invoice, BusinessProfile } from "../types/invoice";
 import { Loader2, Download } from "lucide-react";
 
@@ -12,6 +12,7 @@ export const PublicPrintPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [downloadReady, setDownloadReady] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     fetch(`/api/public/invoice/${id}`)
@@ -28,28 +29,46 @@ export const PublicPrintPage = () => {
       .finally(() => setLoading(false));
   }, [id]);
 
-  // Effect untuk menunggu semua gambar (logo) selesai dimuat, lalu trigger download
+  // Auto-download setelah layout siap
   useEffect(() => {
     if (!invoice || !business) return;
 
     const triggerDownload = async () => {
-      // Beri jeda 1.5 detik agar layout React & Tailwind selesai
+      // Jeda agar React + Tailwind + gambar selesai render
       await new Promise((resolve) => setTimeout(resolve, 1500));
 
       try {
-        await generateInvoicePdf(
+        await downloadInvoicePdf(
           "printable-invoice-element",
           `${invoice.invoiceNumber}.pdf`,
         );
-        setDownloadReady(true);
       } catch (err) {
         console.error("Auto download gagal:", err);
-        setDownloadReady(true); // Tetap tampilkan tombol manual meskipun gagal
+      } finally {
+        setDownloadReady(true);
       }
     };
 
     triggerDownload();
   }, [invoice, business]);
+
+  const handleManualDownload = async () => {
+    if (!invoice || busy) return;
+    setBusy(true);
+    try {
+      await downloadInvoicePdf(
+        "printable-invoice-element",
+        `${invoice.invoiceNumber}.pdf`,
+      );
+    } catch (err: any) {
+      console.error("Manual download gagal:", err);
+      alert(
+        `Gagal membuat PDF: ${err?.message || "kesalahan tidak diketahui"}`,
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -75,7 +94,6 @@ export const PublicPrintPage = () => {
 
   return (
     <div className="min-h-screen bg-slate-100 py-10 px-4">
-      {/* Container PDF (Akan otomatis ter-download) */}
       <div
         id="printable-invoice-element"
         className="max-w-[820px] mx-auto bg-white shadow-xl rounded-xl overflow-hidden"
@@ -87,18 +105,19 @@ export const PublicPrintPage = () => {
         />
       </div>
 
-      {/* Tombol Manual */}
       <div className="text-center mt-8">
         <button
-          onClick={() =>
-            generateInvoicePdf(
-              "printable-invoice-element",
-              `${invoice.invoiceNumber}.pdf`,
-            )
-          }
-          className="inline-flex items-center gap-2 bg-emerald-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-emerald-700 transition shadow-lg"
+          type="button"
+          onClick={handleManualDownload}
+          disabled={busy}
+          className="inline-flex items-center gap-2 bg-emerald-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed transition shadow-lg"
         >
-          <Download className="w-5 h-5" /> Unduh PDF Manual
+          {busy ? (
+            <Loader2 className="w-5 h-5 animate-spin" />
+          ) : (
+            <Download className="w-5 h-5" />
+          )}
+          {busy ? "Membuat PDF..." : "Unduh PDF"}
         </button>
         {!downloadReady && (
           <p className="text-xs text-slate-500 mt-2">
