@@ -1,6 +1,6 @@
 # 🧾 SmartInvoice - Aplikasi Invoice Profesional & WhatsApp Gateway
 
-Aplikasi pembuatan, pengeditan, dan pemantauan invoice lengkap dengan fitur cetak/unduh PDF, **Kwitansi Resmi Lunas**, pengiriman otomatis berkas PDF ke customer via **WhatsApp Gateway (OpenWA & Fonnte)**, dukungan **Dual Database (SQLite Lokal & Supabase Cloud)**, serta integrasi Webhook pesanan toko online.
+Aplikasi pembuatan, pengeditan, dan pemantauan invoice lengkap dengan fitur cetak/unduh PDF, **Kwitansi Resmi Lunas**, pengiriman otomatis berkas PDF ke customer via **WhatsApp Gateway (OpenWA & Fonnte)**, dukungan **Multi-Database (SQLite, Supabase, LocalStorage)**, serta integrasi Webhook pesanan toko online.
 
 Didesain agar bisa berjalan di **Docker (Self-Hosted)** maupun **Cloudflare Workers (Cloud)**.
 
@@ -22,15 +22,18 @@ Didesain agar bisa berjalan di **Docker (Self-Hosted)** maupun **Cloudflare Work
 
 ## 🚀 Fitur Utama
 
-- **Dashboard Real-Time**: Memantau total omset, piutang belum bayar, tagihan jatuh tempo, dan bilah progres persentase dana lunas.
-- **Pembuatan Invoice Cepat**: Penomoran otomatis, baris barang/jasa dinamis, kalkulasi PPN, diskon, ongkir, serta _Terbilang_ otomatis.
-- **Dukungan Varian Produk**: Tambahkan varian (ukuran/warna) di bawah satu produk utama tanpa perlu membuat baris baru.
+- **Autentikasi Aman**: Halaman Setup Admin pertama kali dan Login dengan konfirmasi password (Anti-Typo).
+- **Dashboard Real-Time**: Memantau total omset, piutang belum bayar, tagihan jatuh tempo, dan bilah progres dana lunas.
+- **Pembuatan Invoice Cepat**: Penomoran otomatis (Prefix dapat diubah), baris barang/jasa dinamis, kalkulasi PPN (Default dapat diubah), diskon, ongkir, serta _Terbilang_ otomatis.
+- **Fitur Uang Muka (DP)**: Menghitung sisa tagihan secara otomatis dan mencetaknya di PDF.
+- **Dukungan Varian Produk**: Tambahkan varian (ukuran/warna) dengan harga masing-masing di bawah satu produk utama.
 - **Metode Pembayaran Dinamis**: Dukungan multi-rekening bank, pembayaran Cash, dan QRIS yang otomatis tercetak di PDF.
+- **Watermark Anti-Pemalsuan**: PDF otomatis diberi tanda air (LUNAS, BELUM LUNAS, BELUM BAYAR, DRAFT) yang proporsional di tengah.
 - **Dual WhatsApp Gateway**:
   - **OpenWA (Self-Hosted)**: Kompatibel dengan API OpenWA REST (UUID session, API key, pengiriman PDF base64).
   - **Fonnte (Cloud)**: Cukup masukkan Device Token Fonnte.
 - **Penyimpanan Gambar**: Logo dan QRIS disimpan di Supabase Storage (Cloud) atau Local Disk (Docker).
-- **Hybrid Configuration**: Konfigurasi sensitif (Database & WhatsApp) bisa dikunci via Environment Variables (`.env`) untuk keamanan, atau diatur via UI jika ENV kosong.
+- **Hybrid & Fallback Storage**: Konfigurasi sensitif bisa dikunci via Environment Variables (`.env`). Jika database mati, data otomatis disimpan ke `localStorage` browser (Mode Anonim).
 - **Integrasi API Toko Online**: Endpoint Webhook untuk menerima pesanan dari WooCommerce, Shopify, atau custom store.
 
 ---
@@ -51,7 +54,6 @@ Didesain agar bisa berjalan di **Docker (Self-Hosted)** maupun **Cloudflare Work
    ```bash
    git clone https://github.com/AngkasaProject/SmartInvoice.git
    cd SmartInvoice
-
    ```
 
 2. **Instal Dependensi**
@@ -104,6 +106,8 @@ CREATE TABLE IF NOT EXISTS invoices (
     paid_method TEXT,
     payment_method TEXT,
     payment_account_number TEXT,
+    down_payment NUMERIC(15, 2) DEFAULT 0,
+    remaining_balance NUMERIC(15, 2) DEFAULT 0,
     whatsapp_status TEXT DEFAULT 'not_sent',
     whatsapp_sent_at TIMESTAMPTZ,
     whatsapp_recipient TEXT,
@@ -119,6 +123,15 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Tabel Users (Untuk Login Admin)
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    username TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    role TEXT DEFAULT 'admin',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Index
 CREATE INDEX IF NOT EXISTS idx_invoices_number ON invoices(invoice_number);
 CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
@@ -126,9 +139,11 @@ CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
 -- RLS Policies
 ALTER TABLE invoices ENABLE ROW LEVEL SECURITY;
 ALTER TABLE settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Public Access Invoices" ON invoices FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Public Access Settings" ON settings FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Public Access Users" ON users FOR ALL USING (true) WITH CHECK (true);
 ```
 
 2. Supabase Bucket
@@ -158,6 +173,9 @@ docker compose up -d --build
 3. Aplikasi akan berjalan di http://localhost:3777 (atau sesuai port yang Anda atur di docker-compose.yml).
 
 4. Data SQLite dan file upload lokal akan tersimpan di folder ./data (di-mount sebagai volume).
+
+5. Setup Admin Pertama
+   Saat pertama kali dibuka, aplikasi akan meminta Anda membuat Akun Admin (Username & Password). Simpan kredensial ini untuk login.
 
 ### ☁️ Deployment via Cloudflare Workers (Cloud)
 
