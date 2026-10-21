@@ -12,9 +12,9 @@ import {
   deleteInvoice,
   getSetting,
   saveSetting,
-  checkAdminExists, // Import fungsi auth
-  createAdminUser, // Import fungsi auth
-  getAdminUser, // Import fungsi auth
+  checkAdminExists,
+  createAdminUser,
+  getAdminUser,
   getInvoiceById,
 } from "./server/db.ts";
 
@@ -32,7 +32,12 @@ async function startServer() {
   const app = express();
   const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
-  const UPLOADS_DIR = path.resolve(process.cwd(), "data", "uploads");
+  // Pastikan folder data/ dan data/uploads/ ada sejak awal (penting untuk SQLite di Docker)
+  const DATA_DIR = path.resolve(process.cwd(), "data");
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+  const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
   if (!fs.existsSync(UPLOADS_DIR)) {
     fs.mkdirSync(UPLOADS_DIR, { recursive: true });
   }
@@ -47,14 +52,27 @@ async function startServer() {
   app.get("/api/auth/status", async (req, res) => {
     try {
       const hasAdmin = await checkAdminExists();
+
+      // Sumber kebenaran driver: getDatabaseConfig().
+      // Saat ENV kosong, fungsi ini mengembalikan "sqlite" (lihat server/config.ts),
+      // dan driver "sqlite" berarti file data/smartinvoice.db (lihat server/db.ts).
+      const config = getDatabaseConfig();
+      const activeDriver = config?.activeDriver || "sqlite";
+
       const isDbActive =
-        Boolean(process.env.SUPABASE_URL) ||
-        fs.existsSync(path.join(process.cwd(), "data", "smartinvoice.db"));
+        activeDriver === "sqlite" ||
+        activeDriver === "supabase" ||
+        activeDriver === "mariadb";
 
-      // Mode anonim jika tidak ada Supabase, tidak ada file SQLite, dan belum ada user
-      const isAnonymous = !isDbActive && !hasAdmin;
+      // Anonim hanya jika driver benar-benar tidak valid.
+      const isAnonymous = !isDbActive;
 
-      res.json({ success: true, hasAdmin, isAnonymous });
+      res.json({
+        success: true,
+        hasAdmin,
+        isAnonymous,
+        activeDriver,
+      });
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
     }
@@ -252,7 +270,6 @@ async function startServer() {
           .json({ success: false, message: "Invoice tidak ditemukan." });
       }
 
-      // Ambil profil usaha untuk header PDF
       const business = await getSetting("business_profile", null);
 
       res.json({ success: true, invoice, business });
