@@ -90,34 +90,3 @@ Didesain agar bisa berjalan di **Docker (Self-Hosted)** maupun **Cloudflare Work
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
    );
    ```
-
--- Tabel Settings (Key-Value)
-CREATE TABLE IF NOT EXISTS settings (
-key TEXT PRIMARY KEY,
-value JSONB NOT NULL DEFAULT '{}'::jsonb,
-updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- Index
-CREATE INDEX IF NOT EXISTS idx_invoices_number ON invoices(invoice_number);
-CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
-
--- RLS Policies
-ALTER TABLE invoices ENABLE ROW LEVEL SECURITY;
-ALTER TABLE settings ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "Public Access Invoices" ON invoices FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Public Access Settings" ON settings FOR ALL USING (true) WITH CHECK (true);
-
-## Storage Bucket
-
--- Buat bucket publik
-INSERT INTO storage.buckets (id, name, public)
-VALUES ('smartinvoice-assets', 'smartinvoice-assets', true)
-ON CONFLICT (id) DO NOTHING;
-
--- Izinkan akses publik (Read, Insert, Update, Delete)
-CREATE POLICY "Public Access Assets"
-ON storage.objects FOR ALL
-USING (bucket_id = 'smartinvoice-assets')
-WITH CHECK (bucket_id = 'smartinvoice-assets');
