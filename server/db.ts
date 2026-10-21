@@ -460,3 +460,16 @@ export async function getAdminUser(username: string): Promise<any> {
   const users = readJsonArray(USERS_PATH);
   return users.find((u: any) => u.username === username);
 }
+export async function getInvoiceById(id: string): Promise<any> {
+  if (isSupabaseActive()) {
+    const { data, error } = await getSupabase()
+      .from("invoices")
+      .select("*")
+      .eq("id", id)
+      .single();
+    if (error && error.code !== "PGRST116") throw error;
+    return data ? mapSupabaseInvoiceToApp(data) : null;
+  }
+  const arr = readJsonArray(INVOICES_PATH);
+  return arr.find((i: any) => i.id === id) || null;
+}

@@ -15,6 +15,7 @@ import {
   checkAdminExists, // Import fungsi auth
   createAdminUser, // Import fungsi auth
   getAdminUser, // Import fungsi auth
+  getInvoiceById,
 } from "./server/db.ts";
 
 import {
@@ -242,6 +243,24 @@ async function startServer() {
   // ==========================================
   // INVOICES CRUD
   // ==========================================
+  app.get("/api/public/invoice/:id", async (req, res) => {
+    try {
+      const invoice = await getInvoiceById(req.params.id);
+      if (!invoice) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Invoice tidak ditemukan." });
+      }
+
+      // Ambil profil usaha untuk header PDF
+      const business = await getSetting("business_profile", null);
+
+      res.json({ success: true, invoice, business });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
   app.get("/api/invoices", async (req, res) => {
     try {
       const invoices = await getAllInvoices();

@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect } from "react";
+import { Routes, Route, Navigate } from "react-router-dom";
 import { BusinessProfile, Invoice, OpenWaConfig } from "./types/invoice";
 import {
   defaultBusinessProfile,
@@ -27,15 +28,14 @@ import { WhatsAppSendModal } from "./components/WhatsAppSendModal";
 import { SettingsView } from "./components/SettingsView";
 import { PostSaveActionModal } from "./components/PostSaveActionModal";
 import { InvoicePrintable } from "./components/InvoicePrintable";
-import { AuthPage } from "./components/auth/AuthPage"; // Import AuthPage
+import { AuthPage } from "./components/auth/AuthPage";
+import { PublicPrintPage } from "./pages/PublicPrintPage"; // <-- Import halaman baru
 import { Toaster, toast } from "sonner";
 
-export default function App() {
-  // State Autentikasi
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    return Boolean(localStorage.getItem("smartinvoice_auth"));
-  });
-
+// ==========================================
+// KOMPONEN UTAMA APLIKASI (DASHBOARD)
+// ==========================================
+const MainApp = ({ onLogout }: { onLogout: () => void }) => {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [business, setBusiness] = useState<BusinessProfile>(
     defaultBusinessProfile,
@@ -52,7 +52,6 @@ export default function App() {
     useState<Invoice | null>(null);
   const [postSaveInvoice, setPostSaveInvoice] = useState<Invoice | null>(null);
 
-  // Load data dari database
   const refreshInvoices = async () => {
     try {
       const data = await fetchAllInvoices();
@@ -64,29 +63,10 @@ export default function App() {
   };
 
   useEffect(() => {
-    // Hanya load data jika sudah login
-    if (isAuthenticated) {
-      refreshInvoices();
-      fetchBusinessProfile().then((p) => setBusiness(p));
-      fetchOpenWaConfig().then((cfg) => setOpenWaConfig(cfg));
-    }
-  }, [isAuthenticated]);
-
-  // ==========================================
-  // JIKA BELUM LOGIN, TAMPILKAN HALAMAN AUTH
-  // ==========================================
-  if (!isAuthenticated) {
-    return (
-      <>
-        <Toaster richColors position="top-right" closeButton expand={false} />
-        <AuthPage onLoginSuccess={() => setIsAuthenticated(true)} />
-      </>
-    );
-  }
-
-  // ==========================================
-  // JIKA SUDAH LOGIN, TAMPILKAN APLIKASI
-  // ==========================================
+    refreshInvoices();
+    fetchBusinessProfile().then((p) => setBusiness(p));
+    fetchOpenWaConfig().then((cfg) => setOpenWaConfig(cfg));
+  }, []);
 
   const handleSaveInvoice = async (
     invoiceToSave: Invoice,
@@ -103,16 +83,10 @@ export default function App() {
       if (isEditing) {
         toast.success(
           `Invoice ${invoiceToSave.invoiceNumber} berhasil diperbarui!`,
-          {
-            description: `Customer: ${invoiceToSave.client.name} • ${invoiceToSave.client.phone}`,
-          },
         );
       } else {
         toast.success(
           `Invoice ${invoiceToSave.invoiceNumber} berhasil dibuat!`,
-          {
-            description: `Customer: ${invoiceToSave.client.name} • ${invoiceToSave.client.phone}`,
-          },
         );
       }
 
@@ -135,16 +109,6 @@ export default function App() {
     await saveInvoiceRecord(updatedInvoice);
     const updated = await fetchAllInvoices();
     setInvoices(updated);
-
-    if (isNowPaid) {
-      toast.success(`Invoice ${invoice.invoiceNumber} ditandai LUNAS!`, {
-        description: `Pembayaran sebesar Rp ${invoice.total.toLocaleString("id-ID")} telah disimpan.`,
-      });
-    } else {
-      toast.info(
-        `Invoice ${invoice.invoiceNumber} diubah ke status BELUM LUNAS.`,
-      );
-    }
 
     if (detailInvoice && detailInvoice.id === invoice.id) {
       setDetailInvoice(updatedInvoice);
@@ -245,12 +209,6 @@ export default function App() {
     await refreshInvoices();
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem("smartinvoice_auth");
-    setIsAuthenticated(false);
-    toast.info("Anda telah logout.");
-  };
-
   const activePrintInvoice =
     postSaveInvoice ||
     whatsAppModalInvoice ||
@@ -264,13 +222,11 @@ export default function App() {
       <Navbar
         currentView={currentView === "edit" ? "create" : currentView}
         onChangeView={(view) => {
-          if (view === "create") {
-            setEditingInvoice(null);
-          }
+          if (view === "create") setEditingInvoice(null);
           setCurrentView(view);
         }}
         business={business}
-        onLogout={handleLogout} // <-- Tambahkan prop onLogout
+        onLogout={onLogout}
       />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-8 pb-24 md:pb-8">
@@ -393,5 +349,42 @@ export default function App() {
         )}
       </div>
     </div>
+  );
+};
+
+// ==========================================
+// APP UTAMA (ROUTING)
+// ==========================================
+export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    return Boolean(localStorage.getItem("smartinvoice_auth"));
+  });
+
+  const handleLogout = () => {
+    localStorage.removeItem("smartinvoice_auth");
+    setIsAuthenticated(false);
+    toast.info("Anda telah logout.");
+  };
+
+  return (
+    <>
+      <Toaster richColors position="top-right" closeButton expand={false} />
+      <Routes>
+        {/* RUTE PUBLIK (Tanpa Login) */}
+        <Route path="/print/:id" element={<PublicPrintPage />} />
+
+        {/* RUTE UTAMA (Dengan Login) */}
+        <Route
+          path="/*"
+          element={
+            isAuthenticated ? (
+              <MainApp onLogout={handleLogout} />
+            ) : (
+              <AuthPage onLoginSuccess={() => setIsAuthenticated(true)} />
+            )
+          }
+        />
+      </Routes>
+    </>
   );
 }
