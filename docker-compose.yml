@@ -1,0 +1,27 @@
+version: "3.8"
+
+services:
+  smartinvoice:
+    build: .
+    container_name: smartinvoice-app
+    restart: unless-stopped
+    ports:
+      # Port 3777 di host, diteruskan ke port 3777 di container
+      - "3777:3777"
+    volumes:
+      - ./data:/app/data
+    environment:
+      # Set port di dalam container
+      - PORT=3777
+
+      # Konfigurasi Database (Opsional)
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - SUPABASE_STORAGE_BUCKET=${SUPABASE_STORAGE_BUCKET}
+
+      # Konfigurasi WhatsApp (Opsional)
+      - WHATSAPP_PROVIDER=${WHATSAPP_PROVIDER}
+      - OPENWA_SERVER_URL=${OPENWA_SERVER_URL}
+      - OPENWA_API_KEY=${OPENWA_API_KEY}
+      - OPENWA_SESSION_ID=${OPENWA_SESSION_ID}
+      - FONNTE_TOKEN=${FONNTE_TOKEN}

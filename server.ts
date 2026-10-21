@@ -14,7 +14,12 @@ import {
   saveSetting,
 } from "./server/db.ts";
 
-import { getDatabaseConfig, saveDatabaseConfig } from "./server/config.ts";
+// Import getWhatsAppEnvConfig dari config.ts
+import {
+  getDatabaseConfig,
+  saveDatabaseConfig,
+  getWhatsAppEnvConfig,
+} from "./server/config.ts";
 
 import { uploadImage } from "./server/storage.ts";
 
@@ -51,7 +56,6 @@ async function startServer() {
         });
       }
 
-      // Panggil abstraksi storage (Supabase / Lokal)
       const result = await uploadImage(image, filename || "upload.png");
 
       if (result.success) {
@@ -98,9 +102,6 @@ async function startServer() {
             config.supabase.anonKey,
           );
 
-          // Ekstrak path lengkap setelah '/public/'
-          // URL: .../public/smartinvoice-assets/public/img_123.png
-          // Regex akan mengambil: public/img_123.png
           const match = fileUrl.match(/\/([^/]+\/[^/]+)$/);
           const filePathInBucket = match ? match[1] : "";
 
@@ -135,19 +136,16 @@ async function startServer() {
   // DATABASE MANAGEMENT ENDPOINTS
   // ==========================================
 
-  // 1. Get current database configuration
   app.get("/api/db/config", (req, res) => {
     try {
       const config = getDatabaseConfig();
       const isEnvLocked = Boolean(process.env.SUPABASE_URL);
-
       res.json({ success: true, config, isEnvLocked });
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
     }
   });
 
-  // 2. Save database configuration
   app.post("/api/db/config", (req, res) => {
     try {
       const updated = saveDatabaseConfig(req.body);
@@ -161,7 +159,6 @@ async function startServer() {
     }
   });
 
-  // 3. Test database connection
   app.post("/api/db/test", async (req, res) => {
     try {
       const { driver, credentials } = req.body;
@@ -172,7 +169,6 @@ async function startServer() {
     }
   });
 
-  // 4. Migrate database between drivers
   app.post("/api/db/migrate", async (req, res) => {
     try {
       const { fromDriver, toDriver } = req.body;
@@ -217,11 +213,21 @@ async function startServer() {
     }
   });
 
-  // 6. Settings KV Endpoints
+  // 6. Settings KV Endpoints (DENGAN LOGIKA HYBRID ENV)
   app.get("/api/settings/:key", async (req, res) => {
     try {
-      const value = await getSetting(req.params.key, null);
-      res.json({ success: true, value });
+      const key = req.params.key;
+
+      // Jika minta WA Config dan ENV terisi, kembalikan dari ENV
+      if (key === "openwa_config") {
+        const envWa = getWhatsAppEnvConfig();
+        if (envWa) {
+          return res.json({ success: true, value: envWa, isEnvLocked: true });
+        }
+      }
+
+      const value = await getSetting(key, null);
+      res.json({ success: true, value, isEnvLocked: false });
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
     }
@@ -229,10 +235,20 @@ async function startServer() {
 
   app.post("/api/settings/:key", async (req, res) => {
     try {
-      await saveSetting(req.params.key, req.body.value);
+      const key = req.params.key;
+
+      // Tolak simpan jika ENV terisi untuk WA Config
+      if (key === "openwa_config" && getWhatsAppEnvConfig()) {
+        return res.status(403).json({
+          success: false,
+          message: "Konfigurasi WhatsApp dikunci oleh Environment Variable.",
+        });
+      }
+
+      await saveSetting(key, req.body.value);
       res.json({
         success: true,
-        message: `Pengaturan ${req.params.key} berhasil disimpan ke database`,
+        message: `Pengaturan ${key} berhasil disimpan ke database`,
       });
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
@@ -240,7 +256,7 @@ async function startServer() {
   });
 
   // ==========================================
-  // OPENWA PROXY ENDPOINTS (rmyndharis/OpenWA)
+  // OPENWA PROXY ENDPOINTS
   // ==========================================
   app.post("/api/openwa/test", async (req, res) => {
     const { serverUrl, apiKey } = req.body;
@@ -320,12 +336,10 @@ async function startServer() {
         latencyMs,
       });
     } catch (err: any) {
-      return res
-        .status(500)
-        .json({
-          success: false,
-          message: err?.message || "Gagal menghubungi server OpenWA",
-        });
+      return res.status(500).json({
+        success: false,
+        message: err?.message || "Gagal menghubungi server OpenWA",
+      });
     }
   });
 
@@ -459,7 +473,7 @@ async function startServer() {
   });
 
   // ==========================================
-  // FONNTE PROXY ENDPOINTS (https://fonnte.com)
+  // FONNTE PROXY ENDPOINTS
   // ==========================================
   app.post("/api/fonnte/test", async (req, res) => {
     const { token } = req.body;

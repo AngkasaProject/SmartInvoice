@@ -1,6 +1,6 @@
 /**
  * Cloudflare Workers Edge Entry Point
- * Terintegrasi dengan Supabase
+ * Terintegrasi dengan Supabase, mendukung ENV Lock untuk WA & Database
  */
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
@@ -10,9 +10,15 @@ interface Env {
   ENVIRONMENT?: string;
   SUPABASE_URL: string;
   SUPABASE_ANON_KEY: string;
+  // ENV untuk WhatsApp
+  WHATSAPP_PROVIDER?: string;
+  OPENWA_SERVER_URL?: string;
+  OPENWA_API_KEY?: string;
+  OPENWA_SESSION_ID?: string;
+  FONNTE_TOKEN?: string;
 }
 
-// Singleton Supabase Client untuk Worker
+// Singleton Supabase Client
 let _supabase: SupabaseClient | null = null;
 function getSupabase(env: Env): SupabaseClient {
   if (_supabase) return _supabase;
@@ -23,6 +29,22 @@ function getSupabase(env: Env): SupabaseClient {
   }
   _supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY);
   return _supabase;
+}
+
+// Helper untuk mengecek apakah WA dikunci oleh ENV
+function getWhatsAppEnvConfig(env: Env) {
+  if (!env.WHATSAPP_PROVIDER) return null;
+  return {
+    provider: env.WHATSAPP_PROVIDER as "openwa" | "fonnte",
+    serverUrl: env.OPENWA_SERVER_URL || "",
+    apiKey: env.OPENWA_API_KEY || "",
+    sessionName: env.OPENWA_SESSION_ID || "",
+    fonnteToken: env.FONNTE_TOKEN || "",
+    endpointType: "sendPdf",
+    customEndpointPath: "/sendPdf",
+    autoSendCaption: "",
+    directWhatsappFallback: true,
+  };
 }
 
 export default {
@@ -40,19 +62,44 @@ export default {
       return new Response(null, { headers: corsHeaders });
     }
 
-    // ==========================================
-    // ENDPOINT INVOICES
-    // ==========================================
-    if (url.pathname === "/api/invoices" && request.method === "GET") {
-      try {
+    try {
+      // ==========================================
+      // 1. ENDPOINT DB CONFIG (Agar Form Terkunci)
+      // ==========================================
+      if (url.pathname === "/api/db/config" && request.method === "GET") {
+        const config = {
+          activeDriver: "supabase",
+          sqlite: { filePath: "" },
+          mariadb: { host: "", port: 0, user: "", database: "" },
+          supabase: {
+            url: env.SUPABASE_URL || "",
+            anonKey: env.SUPABASE_ANON_KEY || "",
+          },
+        };
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            config: config,
+            isEnvLocked: true, // Kunci form database di UI
+          }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          },
+        );
+      }
+
+      // ==========================================
+      // 2. ENDPOINT INVOICES
+      // ==========================================
+      if (url.pathname === "/api/invoices" && request.method === "GET") {
         const supabase = getSupabase(env);
         const { data, error } = await supabase
           .from("invoices")
           .select("*")
           .order("created_at", { ascending: false });
-
         if (error) throw error;
-        // Mapping dari snake_case ke camelCase (sesuai db.ts)
+
         const invoices = (data || []).map((row: any) => ({
           id: row.id,
           invoiceNumber: row.invoice_number,
@@ -87,23 +134,12 @@ export default {
         return new Response(JSON.stringify({ success: true, invoices }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
-      } catch (err: any) {
-        return new Response(
-          JSON.stringify({ success: false, message: err.message }),
-          {
-            status: 500,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          },
-        );
       }
-    }
 
-    if (url.pathname === "/api/invoices" && request.method === "POST") {
-      try {
+      if (url.pathname === "/api/invoices" && request.method === "POST") {
         const body = await request.json();
         const supabase = getSupabase(env);
 
-        // Mapping camelCase ke snake_case
         const row = {
           id: body.id,
           invoice_number: body.invoiceNumber,
@@ -146,26 +182,47 @@ export default {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           },
         );
-      } catch (err: any) {
-        return new Response(
-          JSON.stringify({ success: false, message: err.message }),
-          {
-            status: 500,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          },
-        );
       }
-    }
 
-    // ==========================================
-    // ENDPOINT SETTINGS (Profil, Config, dll)
-    // ==========================================
-    if (url.pathname.startsWith("/api/settings/")) {
-      const key = url.pathname.replace("/api/settings/", "");
-      const supabase = getSupabase(env);
+      // ==========================================
+      // 3. ENDPOINT SETTINGS (Profil & WA Config)
+      // ==========================================
+      if (url.pathname.startsWith("/api/settings/")) {
+        const key = url.pathname.replace("/api/settings/", "");
 
-      if (request.method === "GET") {
-        try {
+        // LOGIKA HYBRID UNTUK WA CONFIG
+        if (key === "openwa_config" && getWhatsAppEnvConfig(env)) {
+          if (request.method === "GET") {
+            return new Response(
+              JSON.stringify({
+                success: true,
+                value: getWhatsAppEnvConfig(env),
+                isEnvLocked: true,
+              }),
+              {
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              },
+            );
+          }
+          if (request.method === "POST") {
+            return new Response(
+              JSON.stringify({
+                success: false,
+                message:
+                  "Konfigurasi WhatsApp dikunci oleh Environment Variable.",
+              }),
+              {
+                status: 403,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              },
+            );
+          }
+        }
+
+        // LOGIKA NORMAL UNTUK PROFIL USAHA (Business Profile)
+        const supabase = getSupabase(env);
+
+        if (request.method === "GET") {
           const { data, error } = await supabase
             .from("settings")
             .select("value")
@@ -173,24 +230,18 @@ export default {
             .single();
           if (error && error.code !== "PGRST116") throw error;
           return new Response(
-            JSON.stringify({ success: true, value: data?.value || null }),
+            JSON.stringify({
+              success: true,
+              value: data?.value || null,
+              isEnvLocked: false,
+            }),
             {
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-            },
-          );
-        } catch (err: any) {
-          return new Response(
-            JSON.stringify({ success: false, message: err.message }),
-            {
-              status: 500,
               headers: { ...corsHeaders, "Content-Type": "application/json" },
             },
           );
         }
-      }
 
-      if (request.method === "POST") {
-        try {
+        if (request.method === "POST") {
           const body = await request.json();
           const { error } = await supabase
             .from("settings")
@@ -202,32 +253,43 @@ export default {
           return new Response(JSON.stringify({ success: true }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
-        } catch (err: any) {
-          return new Response(
-            JSON.stringify({ success: false, message: err.message }),
-            {
-              status: 500,
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-            },
-          );
         }
       }
-    }
 
-    // ==========================================
-    // ENDPOINT OPENWA (Seperti sebelumnya)
-    // ==========================================
-    if (url.pathname === "/api/openwa/send" && request.method === "POST") {
-      // ... (Logika lama Anda tetap di sini) ...
-    }
+      // ==========================================
+      // 4. ENDPOINT OPENWA SEND (Proxy)
+      // ==========================================
+      if (url.pathname === "/api/openwa/send" && request.method === "POST") {
+        // Logika pengiriman OpenWA bisa Anda salin dari server.ts
+        // Atau, jika Anda menggunakan ENV, paksa menggunakan env.OPENWA_SERVER_URL
+        return new Response(
+          JSON.stringify({
+            success: false,
+            message: "OpenWA send belum diimplementasikan di Worker ini.",
+          }),
+          {
+            status: 501,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          },
+        );
+      }
 
-    // ==========================================
-    // STATIC ASSETS
-    // ==========================================
-    if (env.ASSETS) {
-      return env.ASSETS.fetch(request);
-    }
+      // ==========================================
+      // 5. STATIC ASSETS
+      // ==========================================
+      if (env.ASSETS) {
+        return env.ASSETS.fetch(request);
+      }
 
-    return new Response("SmartInvoice Edge Ready", { status: 200 });
+      return new Response("SmartInvoice Edge Ready", { status: 200 });
+    } catch (err: any) {
+      return new Response(
+        JSON.stringify({ success: false, message: err.message }),
+        {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
+    }
   },
 };

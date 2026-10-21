@@ -1,94 +1,123 @@
-# 🧾 SmartInvoice - Aplikasi Invoice Profesional & WhatsApp Gateway (OpenWA & Fonnte)
+# 🧾 SmartInvoice - Aplikasi Invoice Profesional & WhatsApp Gateway
 
-Aplikasi pembuatan, pengeditan, dan pemantauan invoice lengkap dengan fitur cetak/unduh PDF, **Kwitansi Resmi Lunas**, pengiriman otomatis berkas PDF ke customer via **WhatsApp Gateway (OpenWA & Fonnte)**, dukungan **Tiga Real Database Server (SQLite Lokal via Bun, MariaDB/MySQL Server, dan Supabase Cloud PostgreSQL)**, serta webhook pesanan toko online.
+Aplikasi pembuatan, pengeditan, dan pemantauan invoice lengkap dengan fitur cetak/unduh PDF, **Kwitansi Resmi Lunas**, pengiriman otomatis berkas PDF ke customer via **WhatsApp Gateway (OpenWA & Fonnte)**, dukungan **Dual Database (SQLite Lokal & Supabase Cloud)**, serta integrasi Webhook pesanan toko online.
+
+Didesain agar bisa berjalan di **Docker (Self-Hosted)** maupun **Cloudflare Workers (Cloud)**.
+
+---
+
+## 📑 Daftar Isi
+
+1. [Fitur Utama](#-fitur-utama)
+2. [Prasyarat Sistem](#-prasyarat-sistem)
+3. [Instalasi Mode Development (Lokal)](#-instalasi-mode-development-lokal)
+4. [Setup Supabase (Database & Storage)](#-setup-supabase-database--storage)
+5. [Deployment via Docker (Self-Hosted)](#-deployment-via-docker-self-hosted)
+6. [Deployment via Cloudflare Workers (Cloud)](#-deployment-via-cloudflare-workers-cloud)
+7. [Panduan Integrasi WhatsApp Gateway](#-panduan-integrasi-whatsapp-gateway)
+8. [Integrasi API Toko Online (Webhook)](#-integrasi-api-toko-online-webhook)
+9. [Lisensi](#-lisensi)
 
 ---
 
 ## 🚀 Fitur Utama
 
-- **Dashboard Real-Time:** Memantau total omset, piutang belum bayar, tagihan jatuh tempo, dan bilah progres persentase dana lunas secara instan.
-- **Pembuatan Invoice Cepat:** Penomoran otomatis (`INV-202610-001`), baris barang/jasa dinamis, kalkulasi PPN (11%/0%), diskon, ongkir, serta *Terbilang otomatis*.
-- **Auto-Fill Pelanggan Berulang:** Deteksi otomatis pelanggan dari transaksi sebelumnya untuk mengisi nama, alamat, dan nomor WhatsApp customer dalam 1 klik.
-- **Pengeditan Invoice & Popup Pasca-Simpan:** Setelah invoice diedit dan disimpan, muncul popup pilihan instan: *Kirim PDF ke WhatsApp Customer*, *Download PDF Salinan*, atau *Kembali ke Dashboard*.
-- **Mode Kwitansi Pembayaran Resmi:** Khusus invoice berstatus Lunas, tersedia format resmi Kwitansi Tanda Terima Sah yang dapat diunduh sebagai PDF terpisah.
-- **Dukungan Dual WhatsApp Gateway (OpenWA & Fonnte):**
-  - **OpenWA (rmyndharis/OpenWA):** Kompatibel dengan API OpenWA REST API server (dukungan UUID session, API key, dan pengiriman dokumen PDF base64).
-  - **Fonnte (fonnte.com):** Cukup masukkan Device Token Fonnte untuk pengiriman otomatis berbasis cloud.
-- **Penyimpanan Gambar Server Lokal Ringan (`/uploads`):**
-  - Gambar logo usaha dan barcode QRIS disimpan langsung ke folder server `data/uploads/` sehingga ukuran database (SQLite / MariaDB) tetap ringan dan cepat.
-- **Real Working Database Server (Bukan LocalStorage):**
-  - **SQLite Lokal Server (Bawaan Bun `bun:sqlite`):** File database server `data/smartinvoice.db` zero-config, berkecepatan tinggi, dan 100% offline.
-  - **MariaDB / MySQL Server (`mysql2`):** Mendukung koneksi ke server database lokal atau remote (XAMPP, Laragon, Docker, VPS).
-  - **Supabase Cloud (PostgreSQL):** Sinkronisasi cloud multi-perangkat real-time.
-  - **Migrasi Sekali Klik:** Fasilitas transfer dan migrasi seluruh invoice dan profil usaha antar database engine secara fleksibel.
-- **Halaman Khusus Riwayat Transaksi:** Pencatatan audit log penerbitan tagihan, status pelunasan, log pengiriman WhatsApp, serta tombol ekspor ke **CSV / Excel**.
-- **Integrasi API Toko Online & Webhook:** Endpoint otomatis (`/api/orders/webhook`) untuk menerima pesanan dari toko online (WooCommerce, Shopify, atau platform custom) dan langsung dikonversi menjadi invoice resmi di database aktif.
-- **UI/UX Pengaturan Terstruktur:**
-  - Pemisahan jelas antara **Konfigurasi Toko** (Profil Usaha, Rekening, Webhook Toko) dan **Konfigurasi Sensitif & Sistem** (WhatsApp Gateway, Database Server, Backup).
+- **Dashboard Real-Time**: Memantau total omset, piutang belum bayar, tagihan jatuh tempo, dan bilah progres persentase dana lunas.
+- **Pembuatan Invoice Cepat**: Penomoran otomatis, baris barang/jasa dinamis, kalkulasi PPN, diskon, ongkir, serta _Terbilang_ otomatis.
+- **Dukungan Varian Produk**: Tambahkan varian (ukuran/warna) di bawah satu produk utama tanpa perlu membuat baris baru.
+- **Metode Pembayaran Dinamis**: Dukungan multi-rekening bank, pembayaran Cash, dan QRIS yang otomatis tercetak di PDF.
+- **Dual WhatsApp Gateway**:
+  - **OpenWA (Self-Hosted)**: Kompatibel dengan API OpenWA REST (UUID session, API key, pengiriman PDF base64).
+  - **Fonnte (Cloud)**: Cukup masukkan Device Token Fonnte.
+- **Penyimpanan Gambar**: Logo dan QRIS disimpan di Supabase Storage (Cloud) atau Local Disk (Docker).
+- **Hybrid Configuration**: Konfigurasi sensitif (Database & WhatsApp) bisa dikunci via Environment Variables (`.env`) untuk keamanan, atau diatur via UI jika ENV kosong.
+- **Integrasi API Toko Online**: Endpoint Webhook untuk menerima pesanan dari WooCommerce, Shopify, atau custom store.
 
 ---
 
-## 📋 Prasyarat Sistem (Prerequisites)
+## 📋 Prasyarat Sistem
 
-Sebelum memulai instalasi, pastikan Anda telah menginstal:
-1. **Bun** versi 1.0 atau lebih baru ([Download Bun](https://bun.sh/)) *(Sangat Direkomendasikan)*, atau **Node.js** versi 18+.
-2. (Opsional) Server **OpenWA** aktif ([rmyndharis/OpenWA](https://github.com/rmyndharis/OpenWA)) atau akun **Fonnte**.
-3. (Opsional) Server **MariaDB / MySQL** jika ingin menggunakan driver MariaDB lokal.
-4. (Opsional) Akun **Supabase** gratis jika ingin menggunakan database cloud PostgreSQL.
-
----
-
-## 🛠️ Langkah-Langkah Instalasi & Menjalankan (Step-by-Step)
-
-### 1. Masuk ke Direktori Proyek
-Buka terminal (PowerShell, Command Prompt, atau Terminal Linux/macOS):
-```bash
-cd /path/ke/SmartInvoice
-```
-
-### 2. Instal Dependensi
-Jalankan perintah berikut:
-```bash
-bun install
-```
-
-### 3. Jalankan Aplikasi di Mode Development
-```bash
-bun run dev
-```
-
-Aplikasi akan berjalan di:
-👉 **`http://localhost:3000`**
+1. **Bun** versi 1.0+ (Sangat Direkomendasikan) atau **Node.js** versi 18+.
+2. (Opsional) Server **OpenWA** aktif atau akun **Fonnte**.
+3. (Opsional) Akun **Supabase** (untuk database cloud & storage).
+4. (Opsional) **Docker** & **Docker Compose** (untuk deployment self-hosted).
 
 ---
 
-## 📱 Panduan Integrasi WhatsApp Gateway
+## 🛠️ Instalasi Mode Development (Lokal)
 
-Buka menu **Pengaturan > WhatsApp Gateway** di aplikasi SmartInvoice:
+1. **Clone Repositori**
 
-### Opsi A: Menggunakan OpenWA (rmyndharis/OpenWA)
-1. Jalankan server OpenWA Anda (misal di port 8080).
-2. Di SmartInvoice:
-   - Pilih tab **OpenWA (rmyndharis/OpenWA)**.
-   - **URL Server OpenWA:** `http://localhost:8080` (atau URL VPS Anda).
-   - **Session ID:** Masukkan UUID sesi Anda.
-   - **API Key:** Masukkan API key server OpenWA Anda.
-3. Klik tombol **"Tes Koneksi OpenWA Sekarang"**.
+   ```bash
+   git clone https://github.com/AngkasaProject/SmartInvoice.git
+   cd SmartInvoice
+   bun install
 
-### Opsi B: Menggunakan Fonnte (fonnte.com)
-1. Daftarkan nomor WhatsApp Anda di dashboard [Fonnte](https://fonnte.com).
-2. Salin Device Token Anda dari dashboard Fonnte.
-3. Di SmartInvoice:
-   - Pilih tab **Fonnte (fonnte.com)**.
-   - Masukkan **Device API Token Fonnte**.
-4. Klik tombol **"Tes Koneksi Fonnte Sekarang"**.
+   cp .env.example .env
 
----
+   bun run dev
 
-## 🗄️ Panduan Database Server
+   ## 🛠️ SETUP DATABASE SUPA
+   -- Tabel Invoices
+   CREATE TABLE IF NOT EXISTS invoices (
+    id TEXT PRIMARY KEY,
+    invoice_number TEXT NOT NULL,
+    issue_date DATE NOT NULL,
+    due_date DATE NOT NULL,
+    status TEXT NOT NULL DEFAULT 'unpaid',
+    client_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    items_data JSONB NOT NULL DEFAULT '[]'::jsonb,
+    subtotal NUMERIC(15, 2) NOT NULL DEFAULT 0,
+    discount_type TEXT DEFAULT 'fixed',
+    discount_value NUMERIC(15, 2) DEFAULT 0,
+    discount_amount NUMERIC(15, 2) DEFAULT 0,
+    tax_rate NUMERIC(5, 2) DEFAULT 0,
+    tax_amount NUMERIC(15, 2) DEFAULT 0,
+    shipping_fee NUMERIC(15, 2) DEFAULT 0,
+    total NUMERIC(15, 2) NOT NULL DEFAULT 0,
+    notes TEXT,
+    terms TEXT,
+    payment_instructions TEXT,
+    paid_at TIMESTAMPTZ,
+    paid_method TEXT,
+    payment_method TEXT,
+    payment_account_number TEXT,
+    whatsapp_status TEXT DEFAULT 'not_sent',
+    whatsapp_sent_at TIMESTAMPTZ,
+    whatsapp_recipient TEXT,
+    whatsapp_last_log TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+   );
+   ```
 
-Di menu **Pengaturan > Database Server**, Anda dapat memilih database aktif:
-1. **SQLite (Lokal File):** Bawaan Bun, tersimpan otomatis di `data/smartinvoice.db`. Tanpa perlu konfigurasi server tambahan.
-2. **MariaDB / MySQL Server:** Masukkan Host (`localhost`), Port (`3306`), User (`root`), Password, dan Nama Database (`smartinvoice`).
-3. **Supabase Cloud (PostgreSQL):** Masukkan Project URL dan Anon Key untuk sinkronisasi cloud.
-4. **Alat Migrasi Database:** Ingin pindah dari SQLite ke MariaDB atau Supabase? Cukup pilih Sumber dan Tujuan, lalu klik **"Jalankan Migrasi Database"**. Seluruh data invoice dan profil otomatis dipindahkan!
+-- Tabel Settings (Key-Value)
+CREATE TABLE IF NOT EXISTS settings (
+key TEXT PRIMARY KEY,
+value JSONB NOT NULL DEFAULT '{}'::jsonb,
+updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Index
+CREATE INDEX IF NOT EXISTS idx_invoices_number ON invoices(invoice_number);
+CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
+
+-- RLS Policies
+ALTER TABLE invoices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE settings ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Public Access Invoices" ON invoices FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Public Access Settings" ON settings FOR ALL USING (true) WITH CHECK (true);
+
+## Storage Bucket
+
+-- Buat bucket publik
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('smartinvoice-assets', 'smartinvoice-assets', true)
+ON CONFLICT (id) DO NOTHING;
+
+-- Izinkan akses publik (Read, Insert, Update, Delete)
+CREATE POLICY "Public Access Assets"
+ON storage.objects FOR ALL
+USING (bucket_id = 'smartinvoice-assets')
+WITH CHECK (bucket_id = 'smartinvoice-assets');

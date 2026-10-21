@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { WhatsAppConfig } from "../../types/invoice";
 import { testWhatsAppGateway } from "../../services/whatsapp";
-import { Server, Save, RefreshCw, Loader2, Send } from "lucide-react";
+import { Server, Save, RefreshCw, Loader2, Send, Lock } from "lucide-react";
 import { toast } from "sonner";
 
 interface WhatsAppSettingsProps {
@@ -18,13 +18,28 @@ export const WhatsAppSettings: React.FC<WhatsAppSettingsProps> = ({
     "idle" | "loading" | "success" | "error"
   >("idle");
   const [waTestMsg, setWaTestMsg] = useState("");
+  const [isEnvLocked, setIsEnvLocked] = useState(false);
 
   useEffect(() => {
-    setWaForm(config);
-  }, [config]);
+    // Ambil status lock dari API
+    fetch("/api/settings/openwa_config")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success) {
+          if (data.value) setWaForm(data.value);
+          if (data.isEnvLocked) setIsEnvLocked(true);
+        }
+      })
+      .catch((err) => console.error("Gagal load config WA", err));
+  }, []);
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isEnvLocked) {
+      return toast.error(
+        "Konfigurasi WhatsApp dikunci oleh Environment Variable.",
+      );
+    }
     onSaveConfig(waForm);
     toast.success(
       `Pengaturan Gateway WhatsApp (${waForm.provider === "fonnte" ? "Fonnte" : "OpenWA"}) berhasil disimpan!`,
@@ -51,6 +66,23 @@ export const WhatsAppSettings: React.FC<WhatsAppSettingsProps> = ({
       onSubmit={handleSave}
       className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-6"
     >
+      {/* Banner Peringatan Jika Dikunci ENV */}
+      {isEnvLocked && (
+        <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl flex items-start gap-3">
+          <Lock className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+          <div>
+            <h3 className="text-sm font-bold text-blue-900">
+              Konfigurasi Dikelola oleh Environment Variable
+            </h3>
+            <p className="text-xs text-blue-700 mt-1">
+              Aplikasi mendeteksi <code>WHATSAPP_PROVIDER</code> di sistem.
+              Pengaturan WhatsApp dikunci secara otomatis dan tidak dapat diubah
+              melalui UI ini.
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between pb-3 border-b border-slate-100">
         <div>
           <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
@@ -61,149 +93,167 @@ export const WhatsAppSettings: React.FC<WhatsAppSettingsProps> = ({
             Kirim invoice PDF resmi langsung ke chat pelanggan.
           </p>
         </div>
-        <button
-          type="submit"
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 transition shadow-xs"
-        >
-          <Save className="w-4 h-4" /> Simpan Gateway
-        </button>
+        {!isEnvLocked && (
+          <button
+            type="submit"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 transition shadow-xs"
+          >
+            <Save className="w-4 h-4" /> Simpan Gateway
+          </button>
+        )}
       </div>
 
-      {/* Provider Selection */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div
-          onClick={() => setWaForm({ ...waForm, provider: "openwa" })}
-          className={`cursor-pointer p-4 rounded-xl border-2 transition ${waForm.provider === "openwa" ? "border-emerald-600 bg-emerald-50/40" : "border-slate-200 bg-white hover:border-slate-300"}`}
-        >
-          <div className="text-xs font-bold text-slate-900">
-            OpenWA (Self-Hosted)
+      <div
+        className={`space-y-6 ${isEnvLocked ? "opacity-50 pointer-events-none" : ""}`}
+      >
+        {/* Provider Selection */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div
+            onClick={() => setWaForm({ ...waForm, provider: "openwa" })}
+            className={`cursor-pointer p-4 rounded-xl border-2 transition ${waForm.provider === "openwa" ? "border-emerald-600 bg-emerald-50/40" : "border-slate-200 bg-white hover:border-slate-300"}`}
+          >
+            <div className="text-xs font-bold text-slate-900 flex items-center justify-between">
+              <span>OpenWA (Self-Hosted)</span>
+              {waForm.provider === "openwa" && (
+                <span className="text-[10px] text-emerald-700 font-extrabold bg-emerald-100 px-1.5 py-0.2 rounded">
+                  Aktif
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-slate-500 mt-1">
+              Server mandiri, dukungan UUID session & API Key.
+            </p>
           </div>
-          <p className="text-[11px] text-slate-500 mt-1">
-            Server mandiri, dukungan UUID session & API Key.
-          </p>
+          <div
+            onClick={() => setWaForm({ ...waForm, provider: "fonnte" })}
+            className={`cursor-pointer p-4 rounded-xl border-2 transition ${waForm.provider === "fonnte" ? "border-blue-600 bg-blue-50/40" : "border-slate-200 bg-white hover:border-slate-300"}`}
+          >
+            <div className="text-xs font-bold text-slate-900 flex items-center justify-between">
+              <span>Fonnte (Cloud)</span>
+              {waForm.provider === "fonnte" && (
+                <span className="text-[10px] text-blue-700 font-extrabold bg-blue-100 px-1.5 py-0.2 rounded">
+                  Aktif
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-slate-500 mt-1">
+              Layanan cloud praktis, cukup masukkan Device Token.
+            </p>
+          </div>
         </div>
-        <div
-          onClick={() => setWaForm({ ...waForm, provider: "fonnte" })}
-          className={`cursor-pointer p-4 rounded-xl border-2 transition ${waForm.provider === "fonnte" ? "border-blue-600 bg-blue-50/40" : "border-slate-200 bg-white hover:border-slate-300"}`}
-        >
-          <div className="text-xs font-bold text-slate-900">Fonnte (Cloud)</div>
-          <p className="text-[11px] text-slate-500 mt-1">
-            Layanan cloud praktis, cukup masukkan Device Token.
-          </p>
-        </div>
-      </div>
 
-      {/* Form OpenWA */}
-      {waForm.provider === "openwa" && (
-        <div className="p-4 bg-emerald-50/50 rounded-xl border border-emerald-200 space-y-3">
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-              URL Server OpenWA
-            </label>
-            <input
-              type="text"
-              value={waForm.serverUrl}
-              onChange={(e) =>
-                setWaForm({ ...waForm, serverUrl: e.target.value })
-              }
-              className="w-full text-xs font-mono p-2.5 rounded-lg border border-slate-200 bg-white"
-              placeholder="http://localhost:8080"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
+        {/* Form OpenWA */}
+        {waForm.provider === "openwa" && (
+          <div className="p-4 bg-emerald-50/50 rounded-xl border border-emerald-200 space-y-3">
             <div>
               <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                Session ID (UUID)
+                URL Server OpenWA
               </label>
               <input
                 type="text"
-                value={waForm.sessionName}
+                value={waForm.serverUrl}
                 onChange={(e) =>
-                  setWaForm({ ...waForm, sessionName: e.target.value })
+                  setWaForm({ ...waForm, serverUrl: e.target.value })
                 }
                 className="w-full text-xs font-mono p-2.5 rounded-lg border border-slate-200 bg-white"
-                placeholder="UUID Sesi"
+                placeholder="http://localhost:8080"
               />
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                  Session ID (UUID)
+                </label>
+                <input
+                  type="text"
+                  value={waForm.sessionName}
+                  onChange={(e) =>
+                    setWaForm({ ...waForm, sessionName: e.target.value })
+                  }
+                  className="w-full text-xs font-mono p-2.5 rounded-lg border border-slate-200 bg-white"
+                  placeholder="UUID Sesi"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                  API Key
+                </label>
+                <input
+                  type="password"
+                  value={waForm.apiKey}
+                  onChange={(e) =>
+                    setWaForm({ ...waForm, apiKey: e.target.value })
+                  }
+                  className="w-full text-xs font-mono p-2.5 rounded-lg border border-slate-200 bg-white"
+                  placeholder="API Key"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Form Fonnte */}
+        {waForm.provider === "fonnte" && (
+          <div className="p-4 bg-blue-50/50 rounded-xl border border-blue-200 space-y-3">
             <div>
               <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                API Key
+                Device API Token Fonnte
               </label>
               <input
                 type="password"
-                value={waForm.apiKey}
+                value={waForm.fonnteToken}
                 onChange={(e) =>
-                  setWaForm({ ...waForm, apiKey: e.target.value })
+                  setWaForm({ ...waForm, fonnteToken: e.target.value })
                 }
                 className="w-full text-xs font-mono p-2.5 rounded-lg border border-slate-200 bg-white"
-                placeholder="API Key"
+                placeholder="Token Fonnte"
               />
             </div>
           </div>
-        </div>
-      )}
-
-      {/* Form Fonnte */}
-      {waForm.provider === "fonnte" && (
-        <div className="p-4 bg-blue-50/50 rounded-xl border border-blue-200 space-y-3">
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-              Device API Token Fonnte
-            </label>
-            <input
-              type="password"
-              value={waForm.fonnteToken}
-              onChange={(e) =>
-                setWaForm({ ...waForm, fonnteToken: e.target.value })
-              }
-              className="w-full text-xs font-mono p-2.5 rounded-lg border border-slate-200 bg-white"
-              placeholder="Token Fonnte"
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Caption Template */}
-      <div>
-        <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-          Template Pesan Pengantar (Caption):
-        </label>
-        <textarea
-          rows={5}
-          value={waForm.autoSendCaption}
-          onChange={(e) =>
-            setWaForm({ ...waForm, autoSendCaption: e.target.value })
-          }
-          className="w-full text-xs font-mono p-2.5 rounded-lg border border-slate-200"
-        />
-        <p className="text-[10px] text-slate-400 mt-1">
-          Tag: {"{client_name}"}, {"{invoice_no}"}, {"{total}"}, {"{due_date}"},{" "}
-          {"{bank_info}"}
-        </p>
-      </div>
-
-      {/* Test Connection */}
-      <div className="flex items-center gap-3 pt-2">
-        <button
-          type="button"
-          onClick={handleTest}
-          disabled={waTestStatus === "loading"}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-slate-900 text-white hover:bg-slate-800 transition disabled:opacity-50"
-        >
-          {waTestStatus === "loading" ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          ) : (
-            <RefreshCw className="w-3.5 h-3.5 text-emerald-400" />
-          )}
-          Tes Koneksi
-        </button>
-        {waTestMsg && (
-          <div
-            className={`p-2 rounded-lg text-xs font-medium ${waTestStatus === "success" ? "bg-emerald-50 text-emerald-900" : "bg-rose-50 text-rose-900"}`}
-          >
-            {waTestMsg}
-          </div>
         )}
+
+        {/* Caption Template */}
+        <div>
+          <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+            Template Pesan Pengantar (Caption):
+          </label>
+          <textarea
+            rows={5}
+            value={waForm.autoSendCaption}
+            onChange={(e) =>
+              setWaForm({ ...waForm, autoSendCaption: e.target.value })
+            }
+            className="w-full text-xs font-mono p-2.5 rounded-lg border border-slate-200"
+          />
+          <p className="text-[10px] text-slate-400 mt-1">
+            Tag: {"{client_name}"}, {"{invoice_no}"}, {"{total}"},{" "}
+            {"{due_date}"}, {"{bank_info}"}
+          </p>
+        </div>
+
+        {/* Test Connection */}
+        <div className="flex items-center gap-3 pt-2">
+          <button
+            type="button"
+            onClick={handleTest}
+            disabled={waTestStatus === "loading"}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-slate-900 text-white hover:bg-slate-800 transition disabled:opacity-50"
+          >
+            {waTestStatus === "loading" ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="w-3.5 h-3.5 text-emerald-400" />
+            )}
+            Tes Koneksi
+          </button>
+          {waTestMsg && (
+            <div
+              className={`p-2 rounded-lg text-xs font-medium ${waTestStatus === "success" ? "bg-emerald-50 text-emerald-900" : "bg-rose-50 text-rose-900"}`}
+            >
+              {waTestMsg}
+            </div>
+          )}
+        </div>
       </div>
     </form>
   );

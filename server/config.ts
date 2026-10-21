@@ -83,3 +83,25 @@ export function saveDatabaseConfig(
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2), "utf-8");
   return merged;
 }
+// Tambahkan di bagian bawah file server/config.ts
+
+export function getWhatsAppEnvConfig() {
+  const provider = process.env.WHATSAPP_PROVIDER as
+    | "openwa"
+    | "fonnte"
+    | undefined;
+
+  if (!provider) return null; // Jika tidak ada ENV, kembalikan null
+
+  return {
+    provider,
+    serverUrl: process.env.OPENWA_SERVER_URL || "",
+    apiKey: process.env.OPENWA_API_KEY || "",
+    sessionName: process.env.OPENWA_SESSION_ID || "",
+    fonnteToken: process.env.FONNTE_TOKEN || "",
+    endpointType: "sendPdf", // Default
+    customEndpointPath: "/sendPdf",
+    autoSendCaption: process.env.WHATSAPP_CAPTION_TEMPLATE || "",
+    directWhatsappFallback: true,
+  };
+}
