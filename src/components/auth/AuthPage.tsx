@@ -27,7 +27,15 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
       .then((res) => res.json())
       .then((data) => {
         if (data.success) {
-          setHasAdmin(data.hasAdmin);
+          // Cek apakah ada admin lokal di localStorage (Mode Anonim)
+          const localAdmin = localStorage.getItem("smartinvoice_local_admin");
+
+          if (data.isAnonymous && localAdmin) {
+            // Jika mode anonim dan sudah ada admin lokal, tampilkan form Login
+            setHasAdmin(true);
+          } else {
+            setHasAdmin(data.hasAdmin);
+          }
           setIsAnonymous(data.isAnonymous);
         }
       })
@@ -38,16 +46,54 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLoginSuccess }) => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Validasi konfirmasi password saat Setup
     if (!hasAdmin && password !== confirmPassword) {
       return toast.error("Password dan Konfirmasi Password tidak cocok!");
     }
 
     setIsSubmitting(true);
 
-    const endpoint = hasAdmin ? "/api/auth/login" : "/api/auth/setup";
-
     try {
+      // ==========================================
+      // LOGIKA MODE ANONIM (Tanpa API/Server)
+      // ==========================================
+      if (isAnonymous) {
+        if (!hasAdmin) {
+          // Buat Admin Lokal
+          const localAdmin = { username, password };
+          localStorage.setItem(
+            "smartinvoice_local_admin",
+            JSON.stringify(localAdmin),
+          );
+
+          toast.success("Akun Admin Lokal berhasil dibuat! Silakan login.");
+          setHasAdmin(true);
+          setPassword("");
+          setConfirmPassword("");
+        } else {
+          // Login Admin Lokal
+          const storedAdmin = localStorage.getItem("smartinvoice_local_admin");
+          if (storedAdmin) {
+            const parsed = JSON.parse(storedAdmin);
+            if (parsed.username === username && parsed.password === password) {
+              localStorage.setItem("smartinvoice_auth", `local_${Date.now()}`);
+              toast.success("Login berhasil (Mode Anonim)!");
+              onLoginSuccess();
+            } else {
+              toast.error("Username atau Password salah!");
+            }
+          } else {
+            toast.error("Akun admin lokal tidak ditemukan.");
+          }
+        }
+        setIsSubmitting(false);
+        return;
+      }
+
+      // ==========================================
+      // LOGIKA NORMAL (Dengan Database/Supabase)
+      // ==========================================
+      const endpoint = hasAdmin ? "/api/auth/login" : "/api/auth/setup";
+
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

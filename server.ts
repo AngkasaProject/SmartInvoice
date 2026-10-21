@@ -92,17 +92,7 @@ async function startServer() {
   app.post("/api/auth/login", async (req, res) => {
     try {
       const { username, password } = req.body;
-
-      // DEBUG 1: Lihat data yang dikirim frontend
-      console.log("=== LOGIN ATTEMPT ===");
-      console.log("Username:", username);
-      console.log("Password length:", password?.length);
-
       const user = await getAdminUser(username);
-
-      // DEBUG 2: Lihat apakah user ditemukan
-      console.log("User found:", user ? user.username : "TIDAK ADA");
-      console.log("Stored Hash:", user?.password_hash);
 
       if (!user) {
         return res
@@ -110,9 +100,7 @@ async function startServer() {
           .json({ success: false, message: "User tidak ditemukan." });
       }
 
-      // DEBUG 3: Coba verifikasi
       const isMatch = await Bun.password.verify(password, user.password_hash);
-      console.log("Password match:", isMatch);
 
       if (!isMatch) {
         return res
