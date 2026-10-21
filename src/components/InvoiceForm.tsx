@@ -48,7 +48,7 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
   const [dueDate, setDueDate] = useState(initialInvoice?.dueDate || "");
   const [notes, setNotes] = useState(initialInvoice?.notes || "");
 
-  // State Pembayaran
+  // State Pembayaran & DP
   const [paymentMethod, setPaymentMethod] = useState(
     initialInvoice?.paymentMethod || "",
   );
@@ -137,7 +137,7 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
   };
 
   // ==========================================
-  // LOGIKA VARIAN
+  // LOGIKA VARIAN (DENGAN HARGA PER VARIAN)
   // ==========================================
 
   const handleAddVariant = (itemIndex: number) => {
@@ -146,7 +146,7 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
       id: `var_${Date.now()}`,
       name: "",
       quantity: 1,
-      price: updatedItems[itemIndex].unitPrice,
+      price: updatedItems[itemIndex].unitPrice || 0,
     };
 
     if (!updatedItems[itemIndex].variants) {
@@ -170,6 +170,12 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
         ...updatedItems[itemIndex].variants![variantIndex],
         [field]: value,
       };
+
+      // Sinkronkan harga satuan induk dengan harga varian pertama
+      if (field === "price" && variantIndex === 0) {
+        updatedItems[itemIndex].unitPrice = Number(value);
+      }
+
       recalculateItemTotals(updatedItems, itemIndex);
       setItems(updatedItems);
     }
@@ -196,8 +202,14 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
         (sum, v) => sum + (Number(v.quantity) || 0),
         0,
       );
+      const totalAmount = item.variants.reduce(
+        (sum, v) => sum + (Number(v.quantity) || 0) * (Number(v.price) || 0),
+        0,
+      );
+
       item.quantity = totalQty;
-      item.amount = totalQty * (Number(item.unitPrice) || 0);
+      item.amount = totalAmount;
+      item.unitPrice = item.variants[0].price || 0; // Harga display mengikuti varian pertama
     } else {
       item.amount =
         (Number(item.quantity) || 0) * (Number(item.unitPrice) || 0);
@@ -474,7 +486,7 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
                         >
                           <input
                             type="text"
-                            placeholder="Ukuran / Warna"
+                            placeholder="Nama Varian"
                             value={variant.name}
                             onChange={(e) =>
                               handleUpdateVariant(
@@ -499,6 +511,21 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
                               )
                             }
                             className="w-14 text-xs p-1.5 border rounded bg-indigo-50/30 text-center"
+                          />
+                          {/* INPUT HARGA VARIAN */}
+                          <input
+                            type="number"
+                            placeholder="Harga"
+                            value={variant.price}
+                            onChange={(e) =>
+                              handleUpdateVariant(
+                                index,
+                                vIdx,
+                                "price",
+                                Number(e.target.value),
+                              )
+                            }
+                            className="w-24 text-xs p-1.5 border rounded bg-indigo-50/30 text-right font-mono"
                           />
                           <button
                             type="button"
@@ -564,8 +591,21 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
                         Number(e.target.value),
                       )
                     }
-                    className="w-full text-sm p-2 border rounded-lg text-right font-mono"
+                    className="w-full text-sm p-2 border rounded-lg text-right font-mono bg-slate-50"
+                    readOnly={Boolean(
+                      item.variants && item.variants.length > 0,
+                    )}
+                    title={
+                      item.variants && item.variants.length > 0
+                        ? "Harga mengikuti varian"
+                        : ""
+                    }
                   />
+                  {item.variants && item.variants.length > 0 && (
+                    <div className="text-[10px] text-slate-400 text-right mt-1">
+                      Ikuti varian 1
+                    </div>
+                  )}
                 </div>
 
                 {/* Total Harga (Col 3) */}
