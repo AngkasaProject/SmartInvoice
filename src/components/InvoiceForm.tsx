@@ -55,11 +55,11 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
   const [paymentAccountNumber, setPaymentAccountNumber] = useState(
     initialInvoice?.paymentAccountNumber || "",
   );
-  const [downPayment, setDownPayment] = useState<number>(
-    initialInvoice?.downPayment || 0,
+  const [downPayment, setDownPayment] = useState<number | string>(
+    initialInvoice?.downPayment || "",
   );
 
-  // State Keuangan
+  // State Keuangan (PPN & Diskon)
   const [items, setItems] = useState<InvoiceItem[]>(
     initialInvoice?.items || [
       {
@@ -75,12 +75,14 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
   const [discountType, setDiscountType] = useState<"fixed" | "percentage">(
     initialInvoice?.discountType || "fixed",
   );
-  const [discountValue, setDiscountValue] = useState<number>(
-    initialInvoice?.discountValue || 0,
+  const [discountValue, setDiscountValue] = useState<number | string>(
+    initialInvoice?.discountValue || "",
   );
-  const [taxRate, setTaxRate] = useState<number>(initialInvoice?.taxRate || 11);
-  const [shippingFee, setShippingFee] = useState<number>(
-    initialInvoice?.shippingFee || 0,
+  const [taxRate, setTaxRate] = useState<number | string>(
+    initialInvoice?.taxRate ?? business.defaultTaxRate ?? 11,
+  );
+  const [shippingFee, setShippingFee] = useState<number | string>(
+    initialInvoice?.shippingFee || "",
   );
 
   // Generate Invoice Number Otomatis jika baru
@@ -91,9 +93,19 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
         existingInvoices.filter((inv) => inv.invoiceNumber.includes(dateStr))
           .length + 1;
       const seq = count.toString().padStart(3, "0");
-      setInvoiceNumber(`INV-${dateStr}-${seq}`);
+
+      // GUNAKAN PREFIX DARI BUSINESS PROFILE (Default: INV)
+      const prefix = business.invoicePrefix || "INV";
+      setInvoiceNumber(`${prefix}-${dateStr}-${seq}`);
     }
-  }, [isEditing, existingInvoices, invoiceNumber]);
+  }, [isEditing, existingInvoices, invoiceNumber, business.invoicePrefix]);
+
+  // Helper untuk input angka agar bisa kosong (tidak memaksa 0)
+  const handleNumericInput = (value: string): number | string => {
+    if (value === "") return "";
+    const num = Number(value);
+    return isNaN(num) ? "" : num;
+  };
 
   // Fungsi Tambah/Hapus Baris Produk
   const handleAddItem = () => {
@@ -120,7 +132,6 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
     setItems(newItems);
   };
 
-  // Fungsi Update Data Produk Utama
   const handleUpdateItem = (
     index: number,
     field: keyof InvoiceItem,
@@ -131,22 +142,22 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
 
     if (field === "quantity" || field === "unitPrice") {
       newItems[index].amount =
-        newItems[index].quantity * newItems[index].unitPrice;
+        (Number(newItems[index].quantity) || 0) *
+        (Number(newItems[index].unitPrice) || 0);
     }
     setItems(newItems);
   };
 
   // ==========================================
-  // LOGIKA VARIAN (DENGAN HARGA PER VARIAN)
+  // LOGIKA VARIAN
   // ==========================================
-
   const handleAddVariant = (itemIndex: number) => {
     const updatedItems = [...items];
     const newVariant: InvoiceItemVariant = {
       id: `var_${Date.now()}`,
       name: "",
       quantity: 1,
-      price: updatedItems[itemIndex].unitPrice || 0,
+      price: Number(updatedItems[itemIndex].unitPrice) || 0,
     };
 
     if (!updatedItems[itemIndex].variants) {
@@ -171,11 +182,9 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
         [field]: value,
       };
 
-      // Sinkronkan harga satuan induk dengan harga varian pertama
       if (field === "price" && variantIndex === 0) {
         updatedItems[itemIndex].unitPrice = Number(value);
       }
-
       recalculateItemTotals(updatedItems, itemIndex);
       setItems(updatedItems);
     }
@@ -209,7 +218,7 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
 
       item.quantity = totalQty;
       item.amount = totalAmount;
-      item.unitPrice = item.variants[0].price || 0; // Harga display mengikuti varian pertama
+      item.unitPrice = item.variants[0].price || 0;
     } else {
       item.amount =
         (Number(item.quantity) || 0) * (Number(item.unitPrice) || 0);
@@ -219,25 +228,25 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
   // ==========================================
   // KALKULASI BOTTOM
   // ==========================================
-
   const subtotal = items.reduce(
     (sum, item) => sum + (Number(item.amount) || 0),
     0,
   );
 
   let discountAmount = 0;
+  const dVal = Number(discountValue) || 0;
   if (discountType === "fixed") {
-    discountAmount = Number(discountValue) || 0;
+    discountAmount = dVal;
   } else {
-    discountAmount = (subtotal * (Number(discountValue) || 0)) / 100;
+    discountAmount = (subtotal * dVal) / 100;
   }
 
   const taxableAmount = Math.max(0, subtotal - discountAmount);
-  const taxAmount = (taxableAmount * (Number(taxRate) || 0)) / 100;
-  const total = taxableAmount + taxAmount + Number(shippingFee);
+  const tRate = Number(taxRate) || 0;
+  const taxAmount = (taxableAmount * tRate) / 100;
+  const total = taxableAmount + taxAmount + (Number(shippingFee) || 0);
 
-  // Hitung Sisa Tagihan
-  const remainingBalance = Math.max(0, total - Number(downPayment));
+  const remainingBalance = Math.max(0, total - (Number(downPayment) || 0));
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -260,13 +269,13 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
       items,
       subtotal,
       discountType,
-      discountValue: Number(discountValue),
+      discountValue: Number(discountValue) || 0,
       discountAmount,
-      taxRate: Number(taxRate),
+      taxRate: tRate,
       taxAmount,
-      shippingFee: Number(shippingFee),
+      shippingFee: Number(shippingFee) || 0,
       total,
-      downPayment: Number(downPayment),
+      downPayment: Number(downPayment) || 0,
       remainingBalance,
       notes,
       status: initialInvoice?.status || "unpaid",
@@ -554,7 +563,7 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
                       handleUpdateItem(
                         index,
                         "quantity",
-                        Number(e.target.value),
+                        handleNumericInput(e.target.value),
                       )
                     }
                     className="w-full text-sm p-2 border rounded-lg text-center bg-slate-50"
@@ -583,12 +592,12 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
                     type="number"
                     required
                     min="0"
-                    value={item.unitPrice}
+                    value={item.unitPrice === 0 ? "" : item.unitPrice}
                     onChange={(e) =>
                       handleUpdateItem(
                         index,
                         "unitPrice",
-                        Number(e.target.value),
+                        handleNumericInput(e.target.value),
                       )
                     }
                     className="w-full text-sm p-2 border rounded-lg text-right font-mono bg-slate-50"
@@ -600,6 +609,7 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
                         ? "Harga mengikuti varian"
                         : ""
                     }
+                    placeholder="0"
                   />
                   {item.variants && item.variants.length > 0 && (
                     <div className="text-[10px] text-slate-400 text-right mt-1">
@@ -674,13 +684,16 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
                 type="number"
                 min="0"
                 value={discountValue}
-                onChange={(e) => setDiscountValue(Number(e.target.value))}
+                onChange={(e) =>
+                  setDiscountValue(handleNumericInput(e.target.value))
+                }
                 className="w-24 text-sm p-1.5 border rounded text-right font-mono"
+                placeholder="0"
               />
             </div>
           </div>
 
-          {/* PPN */}
+          {/* PPN DINAMIS */}
           <div className="flex justify-between items-center text-sm gap-2">
             <span className="text-slate-600 whitespace-nowrap">PPN (%)</span>
             <div className="flex items-center gap-1">
@@ -689,8 +702,9 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
                 min="0"
                 max="100"
                 value={taxRate}
-                onChange={(e) => setTaxRate(Number(e.target.value))}
+                onChange={(e) => setTaxRate(handleNumericInput(e.target.value))}
                 className="w-20 text-sm p-1.5 border rounded text-right font-mono"
+                placeholder="0"
               />
             </div>
           </div>
@@ -704,8 +718,11 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
               type="number"
               min="0"
               value={shippingFee}
-              onChange={(e) => setShippingFee(Number(e.target.value))}
+              onChange={(e) =>
+                setShippingFee(handleNumericInput(e.target.value))
+              }
               className="w-32 text-sm p-1.5 border rounded text-right font-mono"
+              placeholder="0"
             />
           </div>
 
@@ -728,8 +745,11 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
               min="0"
               max={total}
               value={downPayment}
-              onChange={(e) => setDownPayment(Number(e.target.value))}
+              onChange={(e) =>
+                setDownPayment(handleNumericInput(e.target.value))
+              }
               className="w-32 text-sm p-1.5 border rounded text-right font-mono text-emerald-700 font-bold"
+              placeholder="0"
             />
           </div>
 

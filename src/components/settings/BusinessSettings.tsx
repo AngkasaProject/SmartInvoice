@@ -9,6 +9,7 @@ import {
   Plus,
   Building2,
   AlertTriangle,
+  Settings2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -368,6 +369,79 @@ export const BusinessSettings: React.FC<BusinessSettingsProps> = ({
                   </button>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ========================================== */}
+        {/* PENGATURAN DEFAULT INVOICE (BARU)          */}
+        {/* ========================================== */}
+        <div className="pt-4 border-t border-slate-100">
+          <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5 mb-3">
+            <Settings2 className="w-4 h-4 text-slate-600" />
+            Pengaturan Default Invoice
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {/* 1. PREFIX INVOICE */}
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                Prefix Nomor Invoice
+              </label>
+              <input
+                type="text"
+                value={bizForm.invoicePrefix || "INV"}
+                onChange={(e) =>
+                  setBizForm({ ...bizForm, invoicePrefix: e.target.value })
+                }
+                className="w-full text-xs font-mono p-2.5 rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                placeholder="INV"
+              />
+              <p className="text-[10px] text-slate-400 mt-1">
+                Contoh: INV, ASS, atau kode toko Anda.
+              </p>
+            </div>
+
+            {/* 2. SIMBOL MATA UANG */}
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                Simbol Mata Uang
+              </label>
+              <input
+                type="text"
+                value={bizForm.currencySymbol || "Rp"}
+                onChange={(e) =>
+                  setBizForm({ ...bizForm, currencySymbol: e.target.value })
+                }
+                className="w-full text-xs p-2.5 rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                placeholder="Rp"
+              />
+              <p className="text-[10px] text-slate-400 mt-1">
+                Digunakan pada format harga di PDF.
+              </p>
+            </div>
+
+            {/* 3. PPN DEFAULT */}
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                PPN Default (%)
+              </label>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                value={bizForm.defaultTaxRate ?? 11}
+                onChange={(e) =>
+                  setBizForm({
+                    ...bizForm,
+                    defaultTaxRate: Number(e.target.value),
+                  })
+                }
+                className="w-full text-xs p-2.5 rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                placeholder="11"
+              />
+              <p className="text-[10px] text-slate-400 mt-1">
+                Nilai awal PPN saat buat invoice.
+              </p>
             </div>
           </div>
         </div>

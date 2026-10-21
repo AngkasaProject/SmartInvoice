@@ -40,6 +40,47 @@ export interface DbConfigResponse {
 let cachedDbConfig: DatabaseConfig = defaultDatabaseConfig;
 
 // ==========================================
+// LOCALSTORAGE FALLBACK (Mode Anonim)
+// ==========================================
+const LS_INVOICES_KEY = "smartinvoice_local_invoices";
+const LS_SETTINGS_KEY = "smartinvoice_local_settings";
+
+function getLocalInvoices(): Invoice[] {
+  try {
+    const raw = localStorage.getItem(LS_INVOICES_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalInvoice(invoice: Invoice): void {
+  const invoices = getLocalInvoices();
+  const idx = invoices.findIndex((i) => i.id === invoice.id);
+  if (idx >= 0) invoices[idx] = invoice;
+  else invoices.push(invoice);
+  localStorage.setItem(LS_INVOICES_KEY, JSON.stringify(invoices));
+}
+
+function deleteLocalInvoice(id: string): void {
+  const invoices = getLocalInvoices().filter((i) => i.id !== id);
+  localStorage.setItem(LS_INVOICES_KEY, JSON.stringify(invoices));
+}
+
+function getLocalSetting<T>(key: string, defaultValue: T): T {
+  try {
+    const raw = localStorage.getItem(`${LS_SETTINGS_KEY}_${key}`);
+    return raw ? JSON.parse(raw) : defaultValue;
+  } catch {
+    return defaultValue;
+  }
+}
+
+function saveLocalSetting<T>(key: string, value: T): void {
+  localStorage.setItem(`${LS_SETTINGS_KEY}_${key}`, JSON.stringify(value));
+}
+
+// ==========================================
 // CONFIGURATION & DRIVER MANAGEMENT
 // ==========================================
 
@@ -52,7 +93,7 @@ export async function fetchDatabaseConfig(): Promise<DbConfigResponse> {
         cachedDbConfig = data.config;
         return {
           config: data.config,
-          isEnvLocked: data.isEnvLocked || false, // <-- Mengembalikan status lock
+          isEnvLocked: data.isEnvLocked || false,
         };
       }
     }
@@ -142,7 +183,7 @@ export async function migrateDatabase(
 }
 
 // ==========================================
-// INVOICES CRUD (ACTUAL DATABASE WORKING)
+// INVOICES CRUD (DENGAN FALLBACK)
 // ==========================================
 
 export async function fetchAllInvoices(): Promise<Invoice[]> {
@@ -155,35 +196,42 @@ export async function fetchAllInvoices(): Promise<Invoice[]> {
       }
     }
   } catch (err) {
-    console.warn("Failed to fetch invoices from server database", err);
+    console.warn("API offline, beralih ke LocalStorage", err);
   }
-  return [];
+  // Fallback ke LocalStorage
+  return getLocalInvoices();
 }
 
 export async function saveInvoiceRecord(invoice: Invoice): Promise<void> {
-  const res = await fetch("/api/invoices", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(invoice),
-  });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data.message || "Gagal menyimpan invoice ke database");
+  try {
+    const res = await fetch("/api/invoices", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(invoice),
+    });
+    if (res.ok) return; // Berhasil simpan ke server
+  } catch (err) {
+    console.warn("API offline, menyimpan ke LocalStorage", err);
   }
+  // Fallback ke LocalStorage
+  saveLocalInvoice(invoice);
 }
 
 export async function deleteInvoiceRecord(id: string): Promise<void> {
-  const res = await fetch(`/api/invoices/${encodeURIComponent(id)}`, {
-    method: "DELETE",
-  });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data.message || "Gagal menghapus invoice dari database");
+  try {
+    const res = await fetch(`/api/invoices/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+    if (res.ok) return;
+  } catch (err) {
+    console.warn("API offline, menghapus dari LocalStorage", err);
   }
+  // Fallback ke LocalStorage
+  deleteLocalInvoice(id);
 }
 
 // ==========================================
-// SETTINGS PERSISTENCE (ACTUAL DATABASE)
+// SETTINGS PERSISTENCE (DENGAN FALLBACK)
 // ==========================================
 
 export async function fetchSetting<T>(
@@ -199,26 +247,28 @@ export async function fetchSetting<T>(
       }
     }
   } catch (err) {
-    console.warn(`Failed to fetch setting ${key} from server database`, err);
+    console.warn(`API offline, mengambil ${key} dari LocalStorage`, err);
   }
-  return defaultValue;
+  // Fallback ke LocalStorage
+  return getLocalSetting<T>(key, defaultValue);
 }
 
 export async function saveSettingRecord<T>(
   key: string,
   value: T,
 ): Promise<void> {
-  const res = await fetch(`/api/settings/${encodeURIComponent(key)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ value }),
-  });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(
-      data.message || `Gagal menyimpan pengaturan ${key} ke database`,
-    );
+  try {
+    const res = await fetch(`/api/settings/${encodeURIComponent(key)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value }),
+    });
+    if (res.ok) return;
+  } catch (err) {
+    console.warn(`API offline, menyimpan ${key} ke LocalStorage`, err);
   }
+  // Fallback ke LocalStorage
+  saveLocalSetting<T>(key, value);
 }
 
 // Convenience wrappers for specific settings
@@ -290,6 +340,8 @@ CREATE TABLE IF NOT EXISTS invoices (
     paid_method TEXT,
     payment_method TEXT,
     payment_account_number TEXT,
+    down_payment NUMERIC(15, 2) DEFAULT 0,
+    remaining_balance NUMERIC(15, 2) DEFAULT 0,
     whatsapp_status TEXT DEFAULT 'not_sent',
     whatsapp_sent_at TIMESTAMPTZ,
     whatsapp_recipient TEXT,
