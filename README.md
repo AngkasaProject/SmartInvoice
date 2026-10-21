@@ -51,15 +51,37 @@ Didesain agar bisa berjalan di **Docker (Self-Hosted)** maupun **Cloudflare Work
    ```bash
    git clone https://github.com/AngkasaProject/SmartInvoice.git
    cd SmartInvoice
-   bun install
 
-   cp .env.example .env
+   ```
 
-   bun run dev
+2. **Instal Dependensi**
 
-   ## 🛠️ SETUP DATABASE SUPA
-   -- Tabel Invoices
-   CREATE TABLE IF NOT EXISTS invoices (
+```bash
+bun install
+```
+
+3. **Konfigurasi Environment**
+   Salin file .env.example menjadi .env.
+
+```bash
+cp .env.example .env
+```
+
+4. **Jalankan Server**
+
+```bash
+bun run dev
+```
+
+## Setup Supabase (Database & Storage)
+
+Jika Anda menggunakan Supabase, jalankan skrip SQL berikut di SQL Editor Supabase:
+
+1. Table Configuration
+
+```bash
+-- Tabel Invoices
+CREATE TABLE IF NOT EXISTS invoices (
     id TEXT PRIMARY KEY,
     invoice_number TEXT NOT NULL,
     issue_date DATE NOT NULL,
@@ -88,5 +110,123 @@ Didesain agar bisa berjalan di **Docker (Self-Hosted)** maupun **Cloudflare Work
     whatsapp_last_log TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-   );
-   ```
+);
+
+-- Tabel Settings (Key-Value)
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Index
+CREATE INDEX IF NOT EXISTS idx_invoices_number ON invoices(invoice_number);
+CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
+
+-- RLS Policies
+ALTER TABLE invoices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE settings ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Public Access Invoices" ON invoices FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Public Access Settings" ON settings FOR ALL USING (true) WITH CHECK (true);
+```
+
+2. Supabase Bucket
+
+```bash
+-- Buat bucket publik
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('smartinvoice-assets', 'smartinvoice-assets', true)
+ON CONFLICT (id) DO NOTHING;
+
+-- Izinkan akses publik (Read, Insert, Update, Delete)
+CREATE POLICY "Public Access Assets"
+ON storage.objects FOR ALL
+USING (bucket_id = 'smartinvoice-assets')
+WITH CHECK (bucket_id = 'smartinvoice-assets');
+```
+
+## Deployment via Docker (Self-Hosted)
+
+1. Clone Repository
+2. Build docker
+
+```bash
+docker compose up -d --build
+```
+
+3. Aplikasi akan berjalan di http://localhost:3777 (atau sesuai port yang Anda atur di docker-compose.yml).
+
+4. Data SQLite dan file upload lokal akan tersimpan di folder ./data (di-mount sebagai volume).
+
+### ☁️ Deployment via Cloudflare Workers (Cloud)
+
+Aplikasi ini sudah dilengkapi \_worker.ts untuk berjalan di edge Cloudflare.
+
+Pastikan Anda memiliki akun Cloudflare dan sudah login via Wrangler (npx wrangler login).
+
+Atur Environment Variables di Cloudflare Dashboard > Workers > Settings > Variables and Secrets. Wajib diisi:
+
+SUPABASE_URL
+
+SUPABASE_ANON_KEY
+
+Deploy:
+
+bash
+bun run build
+npx wrangler deploy
+(Catatan: Di Cloudflare Workers, konfigurasi Database dan WhatsApp akan otomatis terkunci karena dibaca dari Environment Variables).
+
+### 📱 Panduan Integrasi WhatsApp Gateway
+
+Buka menu Pengaturan > WhatsApp Gateway di aplikasi:
+
+Opsi A: Menggunakan OpenWA
+Jalankan server OpenWA Anda.
+
+Di SmartInvoice, pilih tab OpenWA.
+
+Masukkan URL Server, Session ID (UUID), dan API Key.
+
+Klik Tes Koneksi.
+
+Opsi B: Menggunakan Fonnte
+Dapatkan Device Token dari dashboard Fonnte.
+
+Di SmartInvoice, pilih tab Fonnte.
+
+Masukkan Device Token.
+
+Klik Tes Koneksi.
+
+### 🔗 Integrasi API Toko Online (Webhook)
+
+Aplikasi ini menyediakan endpoint untuk menerima pesanan dari toko online Anda:
+
+URL: http://domain-anda.com/api/orders/webhook
+
+Method: POST
+
+Headers: Authorization: Bearer <WEBHOOK_SECRET>
+
+Contoh Payload:
+
+json
+{
+"orderId": "ORD-12345",
+"customer": {
+"name": "Budi Santoso",
+"phone": "081234567890",
+"address": "Jl. Sudirman No. 45"
+},
+"items": [
+{ "name": "Kaos Polos", "quantity": 2, "unitPrice": 50000 }
+],
+"shippingFee": 15000,
+"taxRate": 11
+}
+📄 Lisensi
+Proyek ini dilisensikan di bawah MIT License. Anda bebas menggunakannya untuk keperluan pribadi maupun komersial.
+
+### Dibuat dengan ❤️ oleh AngkasaProject.
