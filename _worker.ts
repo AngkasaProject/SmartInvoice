@@ -64,9 +64,12 @@ export default {
 
     try {
       // ==========================================
-      // 1. ENDPOINT DB CONFIG (Agar Form Terkunci)
+      // 1. ENDPOINT DB CONFIG (DINAMIS)
       // ==========================================
       if (url.pathname === "/api/db/config" && request.method === "GET") {
+        // Cek apakah variabel ENV benar-benar terisi
+        const isLocked = Boolean(env.SUPABASE_URL && env.SUPABASE_ANON_KEY);
+
         const config = {
           activeDriver: "supabase",
           sqlite: { filePath: "" },
@@ -81,7 +84,7 @@ export default {
           JSON.stringify({
             success: true,
             config: config,
-            isEnvLocked: true, // Kunci form database di UI
+            isEnvLocked: isLocked, // <-- Dinamis
           }),
           {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -121,6 +124,8 @@ export default {
           paymentInstructions: row.payment_instructions,
           paymentMethod: row.payment_method,
           paymentAccountNumber: row.payment_account_number,
+          downPayment: parseFloat(row.down_payment) || 0,
+          remainingBalance: parseFloat(row.remaining_balance) || 0,
           paidAt: row.paid_at,
           paidMethod: row.paid_method,
           whatsappStatus: row.whatsapp_status,
@@ -161,6 +166,8 @@ export default {
           payment_instructions: body.paymentInstructions || null,
           payment_method: body.paymentMethod || null,
           payment_account_number: body.paymentAccountNumber || null,
+          down_payment: body.downPayment || 0,
+          remaining_balance: body.remainingBalance || 0,
           paid_at: body.paidAt || null,
           paid_method: body.paidMethod || null,
           whatsapp_status: body.whatsappStatus || "not_sent",
@@ -260,8 +267,6 @@ export default {
       // 4. ENDPOINT OPENWA SEND (Proxy)
       // ==========================================
       if (url.pathname === "/api/openwa/send" && request.method === "POST") {
-        // Logika pengiriman OpenWA bisa Anda salin dari server.ts
-        // Atau, jika Anda menggunakan ENV, paksa menggunakan env.OPENWA_SERVER_URL
         return new Response(
           JSON.stringify({
             success: false,
