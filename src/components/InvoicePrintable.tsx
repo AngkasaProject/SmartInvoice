@@ -282,7 +282,7 @@ export const InvoicePrintable: React.FC<InvoicePrintableProps> = ({
         </tbody>
       </table>
 
-      {/* 4. KALKULASI */}
+      {/* 4. KALKULASI & DP */}
       <div className="flex justify-end mb-10">
         <div className="w-full sm:w-1/2 text-xs space-y-2">
           <div className="flex justify-between font-bold text-slate-900 border-b border-slate-200 pb-2">
@@ -316,10 +316,30 @@ export const InvoicePrintable: React.FC<InvoicePrintableProps> = ({
               <span>{formatRupiah(invoice.taxAmount)}</span>
             </div>
           )}
+
           <div className="flex justify-between font-bold text-slate-900 border-t border-slate-200 pt-2 mt-2">
             <span className="text-sm">TOTAL TAGIHAN</span>
             <span className="text-sm">{formatRupiah(invoice.total)}</span>
           </div>
+
+          {/* LOGIKA DP DI PDF */}
+          {(invoice.downPayment || 0) > 0 && (
+            <>
+              <div className="flex justify-between text-emerald-600 font-semibold pt-1">
+                <span>Telah Dibayar (DP)</span>
+                <span>-{formatRupiah(invoice.downPayment!)}</span>
+              </div>
+              <div className="flex justify-between items-center py-2 px-3 bg-rose-50 text-rose-700 rounded-lg font-bold text-sm mt-1 border border-rose-200">
+                <span>SISA TAGIHAN</span>
+                <span className="font-mono text-base">
+                  {formatRupiah(
+                    invoice.remainingBalance ||
+                      invoice.total - (invoice.downPayment || 0),
+                  )}
+                </span>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -340,7 +360,6 @@ export const InvoicePrintable: React.FC<InvoicePrintableProps> = ({
                 : "-")}
           </div>
 
-          {/* LOGIKA: QRIS / CASH / TRANSFER BANK */}
           {invoice.paymentMethod === "QRIS" ? (
             <div className="mt-3 flex flex-col items-start gap-2">
               {business.qrisImageUrl ? (

@@ -371,6 +371,9 @@ function mapAppInvoiceToSupabase(inv: any): Record<string, any> {
     payment_instructions: inv.paymentInstructions || null,
     payment_method: inv.paymentMethod || null,
     payment_account_number: inv.paymentAccountNumber || null,
+    // TAMBAHKAN DP & SISA TAGIHAN
+    down_payment: inv.downPayment || 0,
+    remaining_balance: inv.remainingBalance || 0,
     paid_at: inv.paidAt || null,
     paid_method: inv.paidMethod || null,
     whatsapp_status: inv.whatsappStatus || "not_sent",
@@ -404,6 +407,9 @@ function mapSupabaseInvoiceToApp(row: any): any {
     paymentInstructions: row.payment_instructions,
     paymentMethod: row.payment_method,
     paymentAccountNumber: row.payment_account_number,
+    // AMBIL DP & SISA TAGIHAN
+    downPayment: parseFloat(row.down_payment) || 0,
+    remainingBalance: parseFloat(row.remaining_balance) || 0,
     paidAt: row.paid_at,
     paidMethod: row.paid_method,
     whatsappStatus: row.whatsapp_status,

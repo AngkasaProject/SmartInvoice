@@ -115,7 +115,7 @@ export interface StoreApiConfig {
 }
 
 // ==========================================
-// 8. INVOICE UTAMA (Dengan Metode Pembayaran)
+// 8. INVOICE UTAMA (Dengan DP & Metode Pembayaran)
 // ==========================================
 export interface Invoice {
   id: string;
@@ -142,6 +142,10 @@ export interface Invoice {
   // FITUR BARU: Metode Pembayaran yang dipilih
   paymentMethod?: string;
   paymentAccountNumber?: string;
+
+  // FITUR BARU: Down Payment (DP) & Sisa Tagihan
+  downPayment?: number;
+  remainingBalance?: number;
 
   // WhatsApp dispatch record
   whatsappStatus?: "not_sent" | "sent" | "failed";

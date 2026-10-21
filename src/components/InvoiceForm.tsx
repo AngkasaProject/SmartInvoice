@@ -55,6 +55,9 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
   const [paymentAccountNumber, setPaymentAccountNumber] = useState(
     initialInvoice?.paymentAccountNumber || "",
   );
+  const [downPayment, setDownPayment] = useState<number>(
+    initialInvoice?.downPayment || 0,
+  );
 
   // State Keuangan
   const [items, setItems] = useState<InvoiceItem[]>(
@@ -221,6 +224,9 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
   const taxAmount = (taxableAmount * (Number(taxRate) || 0)) / 100;
   const total = taxableAmount + taxAmount + Number(shippingFee);
 
+  // Hitung Sisa Tagihan
+  const remainingBalance = Math.max(0, total - Number(downPayment));
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (items.some((item) => !item.name || item.quantity <= 0)) {
@@ -248,6 +254,8 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
       taxAmount,
       shippingFee: Number(shippingFee),
       total,
+      downPayment: Number(downPayment),
+      remainingBalance,
       notes,
       status: initialInvoice?.status || "unpaid",
       paymentMethod,
@@ -667,6 +675,30 @@ export const InvoiceForm: React.FC<InvoiceFormProps> = ({
             </span>
             <span className="text-xl font-black text-emerald-700 font-mono">
               {formatRupiah(total)}
+            </span>
+          </div>
+
+          {/* TAMBAHKAN INPUT DP DI SINI */}
+          <div className="flex justify-between items-center text-sm gap-2 pt-2 border-t border-slate-100">
+            <span className="text-slate-600 whitespace-nowrap">
+              Uang Muka (DP)
+            </span>
+            <input
+              type="number"
+              min="0"
+              max={total}
+              value={downPayment}
+              onChange={(e) => setDownPayment(Number(e.target.value))}
+              className="w-32 text-sm p-1.5 border rounded text-right font-mono text-emerald-700 font-bold"
+            />
+          </div>
+
+          <div className="flex justify-between items-center mt-2">
+            <span className="font-bold text-slate-800 uppercase">
+              Sisa Tagihan
+            </span>
+            <span className="text-xl font-black text-rose-600 font-mono">
+              {formatRupiah(remainingBalance)}
             </span>
           </div>
         </div>
