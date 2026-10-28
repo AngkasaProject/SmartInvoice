@@ -84,6 +84,86 @@ export async function generateInvoicePdf(
   }
 }
 
+export async function generateMultiPagePdf(
+  elementIds: string[],
+  fileName: string,
+): Promise<GeneratedPdfResult> {
+  if (elementIds.length === 0) {
+    throw new Error("Tidak ada dokumen yang dipilih untuk dibuat menjadi PDF.");
+  }
+
+  const elements = elementIds.map((elementId) => {
+    const element = document.getElementById(elementId);
+    if (!element) {
+      throw new Error(
+        `Elemen dokumen dengan ID "${elementId}" tidak ditemukan.`,
+      );
+    }
+    return element;
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 300));
+
+  try {
+    const pdf = new jsPDF({
+      orientation: "portrait",
+      unit: "mm",
+      format: "a4",
+    });
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+
+    for (const [index, element] of elements.entries()) {
+      const canvas = await html2canvas(element, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: "#ffffff",
+        width: element.scrollWidth,
+        height: element.scrollHeight,
+        windowWidth: 1200,
+      });
+
+      if (canvas.width === 0 || canvas.height === 0) {
+        throw new Error(
+          `Dokumen dengan ID "${element.id}" tidak memiliki ukuran yang dapat dicetak.`,
+        );
+      }
+
+      if (index > 0) {
+        pdf.addPage();
+      }
+
+      const imageData = canvas.toDataURL("image/jpeg", 0.95);
+      const scale = Math.min(
+        pageWidth / canvas.width,
+        pageHeight / canvas.height,
+      );
+      const imageWidth = canvas.width * scale;
+      const imageHeight = canvas.height * scale;
+      pdf.addImage(
+        imageData,
+        "JPEG",
+        (pageWidth - imageWidth) / 2,
+        (pageHeight - imageHeight) / 2,
+        imageWidth,
+        imageHeight,
+      );
+    }
+
+    return {
+      fileName,
+      base64DataUri: pdf.output("datauristring"),
+      blob: pdf.output("blob"),
+    };
+  } catch (error: any) {
+    console.error("Error generate multi-page PDF:", error);
+    throw new Error(
+      `Gagal membuat PDF: ${error.message || "Terjadi kesalahan pada html2canvas."}`,
+    );
+  }
+}
+
 /**
  * Helper internal: memicu unduhan Blob di browser.
  * Tahan banting untuk Chrome, Firefox, Safari, Edge, dan WebView.
@@ -134,5 +214,13 @@ export async function downloadInvoicePdf(
   fileName: string,
 ): Promise<void> {
   const result = await generateInvoicePdf(elementId, fileName);
+  downloadBlob(result.blob, result.fileName);
+}
+
+export async function downloadMultiPagePdf(
+  elementIds: string[],
+  fileName: string,
+): Promise<void> {
+  const result = await generateMultiPagePdf(elementIds, fileName);
   downloadBlob(result.blob, result.fileName);
 }

@@ -347,6 +347,14 @@ const MainApp = ({ onLogout }: { onLogout: () => void }) => {
             documentType="invoice"
           />
         )}
+        {activePrintInvoice?.status === "paid" && (
+          <InvoicePrintable
+            id="printable-receipt-element"
+            invoice={activePrintInvoice}
+            business={business}
+            documentType="kwitansi"
+          />
+        )}
       </div>
     </div>
   );
