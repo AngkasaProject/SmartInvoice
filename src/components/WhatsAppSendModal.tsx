@@ -7,7 +7,10 @@ import {
   testWhatsAppGateway,
   sendWhatsAppText, // <-- Import fungsi baru
 } from "../services/whatsapp";
-import { generateInvoicePdf } from "../utils/pdfGenerator";
+import {
+  generateInvoicePdf,
+  generateMultiPagePdf,
+} from "../utils/pdfGenerator";
 import { cleanWhatsAppNumber, formatDisplayPhone } from "../utils/formatters";
 import {
   Send,
@@ -103,10 +106,19 @@ export const WhatsAppSendModal: React.FC<WhatsAppSendModalProps> = ({
         setStatusMessage("Memproses dokumen PDF faktur...");
         setPdfGenerating(true);
 
-        const pdfResult = await generateInvoicePdf(
-          "printable-invoice-element",
-          `${invoice.invoiceNumber}.pdf`,
-        );
+        const pdfResult =
+          invoice.status === "paid"
+            ? await generateMultiPagePdf(
+                [
+                  "printable-invoice-element",
+                  "printable-receipt-element",
+                ],
+                `${invoice.invoiceNumber}.pdf`,
+              )
+            : await generateInvoicePdf(
+                "printable-invoice-element",
+                `${invoice.invoiceNumber}.pdf`,
+              );
         setPdfGenerating(false);
         setStatusMessage(`Mengirim dokumen via ${providerName} Gateway...`);
 

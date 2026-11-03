@@ -1,7 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { InvoicePrintable } from "../components/InvoicePrintable";
-import { downloadInvoicePdf } from "../utils/pdfGenerator";
+import {
+  downloadInvoicePdf,
+  downloadMultiPagePdf,
+} from "../utils/pdfGenerator";
 import { Invoice, BusinessProfile } from "../types/invoice";
 import { Loader2, Download } from "lucide-react";
 
@@ -13,6 +16,21 @@ export const PublicPrintPage = () => {
   const [error, setError] = useState<string | null>(null);
   const [downloadReady, setDownloadReady] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  const downloadPdf = async (currentInvoice: Invoice) => {
+    if (currentInvoice.status === "paid") {
+      await downloadMultiPagePdf(
+        ["printable-invoice-element", "printable-receipt-element"],
+        `${currentInvoice.invoiceNumber}.pdf`,
+      );
+      return;
+    }
+
+    await downloadInvoicePdf(
+      "printable-invoice-element",
+      `${currentInvoice.invoiceNumber}.pdf`,
+    );
+  };
 
   useEffect(() => {
     fetch(`/api/public/invoice/${id}`)
@@ -38,10 +56,7 @@ export const PublicPrintPage = () => {
       await new Promise((resolve) => setTimeout(resolve, 1500));
 
       try {
-        await downloadInvoicePdf(
-          "printable-invoice-element",
-          `${invoice.invoiceNumber}.pdf`,
-        );
+        await downloadPdf(invoice);
       } catch (err) {
         console.error("Auto download gagal:", err);
       } finally {
@@ -56,10 +71,7 @@ export const PublicPrintPage = () => {
     if (!invoice || busy) return;
     setBusy(true);
     try {
-      await downloadInvoicePdf(
-        "printable-invoice-element",
-        `${invoice.invoiceNumber}.pdf`,
-      );
+      await downloadPdf(invoice);
     } catch (err: any) {
       console.error("Manual download gagal:", err);
       alert(
@@ -104,6 +116,25 @@ export const PublicPrintPage = () => {
           documentType="invoice"
         />
       </div>
+
+      {invoice.status === "paid" && (
+        <div
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            left: "-9999px",
+            top: 0,
+            width: "820px",
+          }}
+        >
+          <InvoicePrintable
+            id="printable-receipt-element"
+            invoice={invoice}
+            business={business}
+            documentType="kwitansi"
+          />
+        </div>
+      )}
 
       <div className="text-center mt-8">
         <button

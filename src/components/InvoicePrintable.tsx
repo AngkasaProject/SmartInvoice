@@ -99,6 +99,9 @@ export const InvoicePrintable: React.FC<InvoicePrintableProps> = ({
               </div>
             </div>
             <div className="text-right">
+              <div className="inline-block -rotate-12 rounded-full border-2 border-emerald-600 px-3 py-1 text-[10px] font-black tracking-widest text-emerald-700">
+                LUNAS
+              </div>
               <h2 className="text-2xl font-black text-slate-900 tracking-wider underline underline-offset-4">
                 KWITANSI
               </h2>
@@ -393,23 +396,31 @@ export const InvoicePrintable: React.FC<InvoicePrintableProps> = ({
               <span className="text-sm">{formatRupiah(invoice.total)}</span>
             </div>
 
-            {/* LOGIKA DP DI PDF */}
-            {(invoice.downPayment || 0) > 0 && (
-              <>
-                <div className="flex justify-between text-emerald-600 font-semibold pt-1">
-                  <span>Telah Dibayar (DP)</span>
-                  <span>-{formatRupiah(invoice.downPayment!)}</span>
-                </div>
-                <div className="flex justify-between items-center py-2 px-3 bg-rose-50 text-rose-700 rounded-lg font-bold text-sm mt-1 border border-rose-200">
-                  <span>SISA TAGIHAN</span>
-                  <span className="font-mono text-base">
-                    {formatRupiah(
-                      invoice.remainingBalance ||
-                        invoice.total - (invoice.downPayment || 0),
-                    )}
-                  </span>
-                </div>
-              </>
+            {invoice.status === "paid" ? (
+              <div className="flex justify-between items-center py-2 px-3 bg-emerald-50 text-emerald-700 rounded-lg font-bold text-sm mt-1 border border-emerald-200">
+                <span>TOTAL TERBAYAR</span>
+                <span className="font-mono text-base">
+                  {formatRupiah(invoice.total)}
+                </span>
+              </div>
+            ) : (
+              (invoice.downPayment || 0) > 0 && (
+                <>
+                  <div className="flex justify-between text-emerald-600 font-semibold pt-1">
+                    <span>Telah Dibayar (DP)</span>
+                    <span>-{formatRupiah(invoice.downPayment!)}</span>
+                  </div>
+                  <div className="flex justify-between items-center py-2 px-3 bg-rose-50 text-rose-700 rounded-lg font-bold text-sm mt-1 border border-rose-200">
+                    <span>SISA TAGIHAN</span>
+                    <span className="font-mono text-base">
+                      {formatRupiah(
+                        invoice.remainingBalance ||
+                          invoice.total - (invoice.downPayment || 0),
+                      )}
+                    </span>
+                  </div>
+                </>
+              )
             )}
           </div>
         </div>
