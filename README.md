@@ -188,29 +188,115 @@ Neon dapat digunakan dari Docker maupun Workers. Atur `NEON_DATABASE_URL` sebaga
 
 ### ☁️ Deployment via Cloudflare Workers (Cloud)
 
-Aplikasi ini sudah dilengkapi \_worker.ts untuk berjalan di edge Cloudflare.
+Berikut langkah deploy dari repository ke Cloudflare Workers menggunakan D1 sebagai database default dan R2 untuk file gambar. Perintah `npx wrangler` juga dapat dijalankan dari Windows PowerShell.
 
-Pastikan Anda memiliki akun Cloudflare dan sudah login via Wrangler (`npx wrangler login`).
+#### 1. Persiapan
 
-1. Buat D1 dan R2, lalu hubungkan D1 ID yang ditampilkan Wrangler ke `database_id` di `wrangler.toml`:
+- Siapkan akun Cloudflare dan domain (domain khusus opsional; URL `workers.dev` cukup untuk mulai).
+- Install [Bun](https://bun.sh/) dan Node.js/npm.
+- Clone repository, checkout branch yang ingin dideploy, lalu install dependency:
 
-   ```bash
-   npx wrangler d1 create smartinvoice
-   npx wrangler r2 bucket create smartinvoice-assets
-   ```
+  ```powershell
+  git clone https://github.com/AngkasaProject/SmartInvoice.git
+  cd SmartInvoice
+  git checkout preview
+  bun install
+  npx wrangler login
+  ```
 
-2. Terapkan skema D1 dari [`migrations/d1/0001_init.sql`](./migrations/d1/0001_init.sql) dan deploy:
+#### 2. Buat database D1 dan bucket R2
 
-   ```bash
-   npx wrangler d1 migrations apply smartinvoice --remote
-   bun run build
-   npx wrangler deploy
-   ```
+Jalankan sekali untuk membuat resource:
 
-3. D1 (`DB`) adalah database default Workers dan R2 (`R2_BUCKET`) dipakai untuk upload logo/QRIS. R2 bucket dibutuhkan untuk upload gambar ketika memakai D1.
-4. Untuk memakai Neon, tambahkan secret `NEON_DATABASE_URL` dan variable `DATABASE_DRIVER=neon`. Untuk Supabase, atur `DATABASE_DRIVER=supabase`, `SUPABASE_URL`, dan `SUPABASE_ANON_KEY`. Jalankan [`migrations/neon/0001_init.sql`](./migrations/neon/0001_init.sql) terlebih dahulu jika memakai Neon.
+```powershell
+npx wrangler d1 create smartinvoice
+npx wrangler r2 bucket create smartinvoice-assets
+```
 
-Konfigurasi Workers dikelola melalui Wrangler dan Secrets sehingga terkunci dari UI. Jika menggunakan Neon atau Supabase sebagai database, R2 tetap digunakan oleh Worker untuk file upload.
+Perintah D1 menampilkan `database_id`. Buka `wrangler.toml` dan ganti nilai contoh `REPLACE_WITH_D1_DATABASE_ID` dengan ID tersebut. Pastikan nama bucket R2 sama dengan `smartinvoice-assets` di konfigurasi. Jika resource sudah ada, gunakan database ID dan nama bucket yang sudah ada, jangan membuat duplikat.
+
+Konfigurasi `[assets]`, binding D1 `DB`, binding R2 `R2_BUCKET`, dan direktori migration sudah tersedia di `wrangler.toml`. D1 dan R2 tetap dipakai jika nanti Anda memilih Neon atau Supabase sebagai database.
+
+#### 3. Terapkan skema D1
+
+Migration membuat tabel invoice, settings, dan users:
+
+```powershell
+npx wrangler d1 migrations apply smartinvoice --remote
+```
+
+Pastikan perintah selesai tanpa error sebelum deploy. File migration ada di [`migrations/d1/0001_init.sql`](./migrations/d1/0001_init.sql).
+
+#### 4. Build dan deploy
+
+```powershell
+bun run lint
+bun run build
+npx wrangler deploy
+```
+
+Wrangler akan menampilkan URL Worker, biasanya `https://smart-invoice.<subdomain>.workers.dev`. Buka URL itu untuk menyelesaikan setup admin pertama kali. Buat satu invoice percobaan dan unggah logo/QRIS untuk memastikan database dan storage berfungsi.
+
+#### 5. Secrets dan konfigurasi opsional
+
+D1 adalah default; jangan atur `DATABASE_DRIVER` untuk mode ini. Rahasia Worker disimpan melalui Wrangler, bukan di `.env` lokal atau di UI:
+
+```powershell
+npx wrangler secret put WHATSAPP_PROVIDER
+npx wrangler secret put FONNTE_TOKEN
+```
+
+Isi nilai saat Wrangler meminta input. Atur hanya secret yang diperlukan. Untuk OpenWA, masukkan `openwa` sebagai nilai `WHATSAPP_PROVIDER`, lalu tambahkan secret `OPENWA_SERVER_URL`, `OPENWA_API_KEY`, dan `OPENWA_SESSION_ID`.
+
+Untuk Neon, ubah bagian `[vars]` pada `wrangler.toml` menjadi:
+
+```toml
+[vars]
+ENVIRONMENT = "production"
+DATABASE_DRIVER = "neon"
+```
+
+Kemudian simpan connection string sebagai secret:
+
+```powershell
+npx wrangler secret put NEON_DATABASE_URL
+```
+
+Sebelum deploy dengan Neon, jalankan [`migrations/neon/0001_init.sql`](./migrations/neon/0001_init.sql) melalui SQL Editor Neon. Untuk Supabase, tambahkan `DATABASE_DRIVER = "supabase"` di `[vars]`, lalu simpan URL dan key:
+
+```powershell
+npx wrangler secret put SUPABASE_URL
+npx wrangler secret put SUPABASE_ANON_KEY
+```
+
+R2 tetap diperlukan untuk upload gambar pada semua pilihan database di Workers.
+
+Sesudah mengubah binding, variable, atau secret, jalankan ulang `npx wrangler deploy`. `.env` dan `.env.example` dipakai untuk server Docker/Bun; Workers membaca binding dari `wrangler.toml` dan variable/secret dari konfigurasi Cloudflare. Pengaturan database Workers dikunci dari UI.
+
+#### 6. Perbarui deployment
+
+Setelah perubahan kode pada branch yang dipakai:
+
+```powershell
+git pull
+bun install
+bun run lint
+bun run build
+npx wrangler deploy
+```
+
+Jika ada migration D1 baru, terapkan terlebih dahulu dengan:
+
+```powershell
+npx wrangler d1 migrations apply smartinvoice --remote
+```
+
+Untuk memeriksa migration dan resource D1:
+
+```powershell
+npx wrangler d1 migrations list smartinvoice --remote
+npx wrangler d1 execute smartinvoice --remote --command "SELECT name FROM sqlite_master WHERE type='table'"
+```
 
 ### 📱 Panduan Integrasi WhatsApp Gateway
 
