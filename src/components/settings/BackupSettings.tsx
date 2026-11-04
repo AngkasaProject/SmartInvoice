@@ -1,19 +1,22 @@
 import React from "react";
 import {
   Invoice,
+  InvoiceBackup,
   BusinessProfile,
   WhatsAppConfig,
   StoreApiConfig,
 } from "../../types/invoice";
 import { Database, Download, Upload, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
+import { ConfirmDialog } from "../ConfirmDialog";
+import { defaultStoreApiConfig } from "../../services/storage";
 
 interface BackupSettingsProps {
   invoices: Invoice[];
   business: BusinessProfile;
   config: WhatsAppConfig;
   storeConfig?: StoreApiConfig | null;
-  onImportData: (data: any) => void;
+  onRestoreData: (data: InvoiceBackup) => Promise<void>;
   onResetData: () => void;
 }
 
@@ -22,9 +25,17 @@ export const BackupSettings: React.FC<BackupSettingsProps> = ({
   business,
   config,
   storeConfig,
-  onImportData,
+  onRestoreData,
   onResetData,
 }) => {
+  const [isResetDialogOpen, setIsResetDialogOpen] = React.useState(false);
+  const [backupToRestore, setBackupToRestore] =
+    React.useState<InvoiceBackup | null>(null);
+  const [backupFileName, setBackupFileName] = React.useState("");
+  const [isRestoreDialogOpen, setIsRestoreDialogOpen] = React.useState(false);
+  const [isRestoring, setIsRestoring] = React.useState(false);
+  const [isResetting, setIsResetting] = React.useState(false);
+
   const handleExport = () => {
     const backupData = {
       version: "2.0",
@@ -32,7 +43,7 @@ export const BackupSettings: React.FC<BackupSettingsProps> = ({
       exportedAt: new Date().toISOString(),
       business,
       config,
-      storeConfig,
+      storeConfig: storeConfig || defaultStoreApiConfig,
       invoices,
     };
     const blob = new Blob([JSON.stringify(backupData, null, 2)], {
@@ -47,24 +58,88 @@ export const BackupSettings: React.FC<BackupSettingsProps> = ({
     toast.success("File cadangan JSON berhasil diunduh!");
   };
 
-  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleBackupSelection = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    e.target.value = "";
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
         const parsed = JSON.parse(event.target?.result as string);
-        if (parsed.invoices && parsed.business) {
-          onImportData(parsed);
-          toast.success("Data cadangan berhasil dipulihkan!");
-        } else {
-          toast.error("Format berkas cadangan JSON tidak valid.");
+        if (
+          !parsed ||
+          typeof parsed !== "object" ||
+          !parsed.business ||
+          typeof parsed.business !== "object" ||
+          !Array.isArray(parsed.invoices) ||
+          !parsed.config ||
+          typeof parsed.config !== "object" ||
+          (parsed.storeConfig != null &&
+            typeof parsed.storeConfig !== "object")
+        ) {
+          throw new Error("Struktur file backup tidak sesuai.");
         }
-      } catch (err: any) {
-        toast.error("Gagal membaca file JSON: " + err.message);
+        const invalidInvoice = parsed.invoices.some(
+          (invoice: Partial<Invoice>) =>
+            !invoice ||
+            typeof invoice.id !== "string" ||
+            typeof invoice.invoiceNumber !== "string",
+        );
+        if (invalidInvoice) {
+          throw new Error("Daftar invoice di file backup tidak valid.");
+        }
+        if (
+          new Set(parsed.invoices.map((invoice: Invoice) => invoice.id)).size !==
+          parsed.invoices.length
+        ) {
+          throw new Error("File backup berisi ID invoice yang duplikat.");
+        }
+        setBackupToRestore(parsed as InvoiceBackup);
+        setBackupFileName(file.name);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Format file tidak valid.";
+        toast.error(`Gagal membaca file backup: ${message}`);
       }
     };
+    reader.onerror = () => toast.error("Gagal membaca file backup.");
     reader.readAsText(file);
+  };
+
+  const handleRestore = async () => {
+    if (!backupToRestore || isRestoring) return;
+    setIsRestoring(true);
+    try {
+      await onRestoreData(backupToRestore);
+      setIsRestoreDialogOpen(false);
+      setBackupToRestore(null);
+      setBackupFileName("");
+      toast.success(
+        `Backup berhasil dipulihkan (${backupToRestore.invoices.length} invoice).`,
+      );
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Terjadi kesalahan tidak diketahui.";
+      toast.error(`Gagal memulihkan backup: ${message}`);
+    } finally {
+      setIsRestoring(false);
+    }
+  };
+
+  const handleReset = async () => {
+    if (isResetting) return;
+    setIsResetting(true);
+    try {
+      await onResetData();
+      setIsResetDialogOpen(false);
+      toast.info("Data berhasil di-reset.");
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Terjadi kesalahan tidak diketahui.";
+      toast.error(`Gagal mereset data: ${message}`);
+    } finally {
+      setIsResetting(false);
+    }
   };
 
   return (
@@ -75,8 +150,8 @@ export const BackupSettings: React.FC<BackupSettingsProps> = ({
           Pemulihan Data
         </h2>
         <p className="text-xs text-slate-500 mt-0.5">
-          Simpan dan pulihkan seluruh riwayat invoice dan pengaturan dalam
-          berkas JSON mandiri.
+          Simpan dan pulihkan riwayat invoice, profil usaha, serta pengaturan
+          dalam berkas JSON. File gambar tidak disertakan.
         </p>
       </div>
 
@@ -102,23 +177,59 @@ export const BackupSettings: React.FC<BackupSettingsProps> = ({
         <div className="p-5 rounded-2xl border border-slate-200 bg-slate-50 flex flex-col justify-between space-y-3">
           <div>
             <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-              <Upload className="w-4 h-4 text-indigo-600" /> Import JSON
+              <Upload className="w-4 h-4 text-indigo-600" /> Pulihkan dari Backup
             </h3>
             <p className="text-[11px] text-slate-500 mt-1">
-              Impor data invoice dan profil usaha dari berkas cadangan JSON.
+              Ganti data invoice, profil usaha, dan pengaturan dengan isi file
+              backup JSON. File gambar tidak disertakan dalam backup.
             </p>
           </div>
           <label className="w-full cursor-pointer inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold bg-white border border-slate-300 text-slate-800 hover:bg-slate-100">
-            <Upload className="w-4 h-4 text-slate-600" /> Pilih File JSON
+            <Upload className="w-4 h-4 text-slate-600" /> Pilih File Backup
             <input
               type="file"
               accept=".json"
-              onChange={handleImport}
+              onChange={handleBackupSelection}
               className="hidden"
             />
           </label>
+          {backupToRestore && (
+            <div className="space-y-3 rounded-xl border border-indigo-200 bg-indigo-50 p-3">
+              <p className="break-all text-[11px] font-semibold text-indigo-900">
+                {backupFileName}
+              </p>
+              <p className="text-[11px] text-indigo-800">
+                {backupToRestore.invoices.length} invoice siap dipulihkan.
+                Data yang ada saat ini akan diganti.
+              </p>
+              <button
+                type="button"
+                onClick={() => setIsRestoreDialogOpen(true)}
+                className="w-full rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Pulihkan Data
+              </button>
+            </div>
+          )}
         </div>
       </div>
+      <ConfirmDialog
+        isOpen={isRestoreDialogOpen}
+        title="Pulihkan backup?"
+        message={
+          backupToRestore
+            ? `Data invoice saat ini akan diganti dengan ${backupToRestore.invoices.length} invoice dari file "${backupFileName}", termasuk profil usaha dan pengaturan. Tindakan ini tidak dapat dibatalkan.`
+            : ""
+        }
+        confirmLabel={isRestoring ? "Memulihkan..." : "Ya, pulihkan"}
+        confirmDisabled={isRestoring}
+        onCancel={() => {
+          if (!isRestoring) {
+            setIsRestoreDialogOpen(false);
+          }
+        }}
+        onConfirm={() => void handleRestore()}
+      />
 
       <div className="pt-4 border-t border-slate-200">
         <div className="p-4 rounded-xl border border-rose-200 bg-rose-50/50 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -132,18 +243,24 @@ export const BackupSettings: React.FC<BackupSettingsProps> = ({
             </p>
           </div>
           <button
-            onClick={() => {
-              if (confirm("Yakin ingin mereset seluruh data?")) {
-                onResetData();
-                toast.info("Data berhasil di-reset.");
-              }
-            }}
+            onClick={() => setIsResetDialogOpen(true)}
             className="px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 text-white hover:bg-rose-700 shrink-0"
           >
             Reset Data
           </button>
         </div>
       </div>
+      <ConfirmDialog
+        isOpen={isResetDialogOpen}
+        title="Reset seluruh data?"
+        message="Invoice akan diganti dengan data sampel, dan profil usaha serta pengaturan akan dikembalikan ke nilai awal. Tindakan ini tidak dapat dibatalkan."
+        confirmLabel={isResetting ? "Mereset..." : "Reset data"}
+        confirmDisabled={isResetting}
+        onCancel={() => {
+          if (!isResetting) setIsResetDialogOpen(false);
+        }}
+        onConfirm={() => void handleReset()}
+      />
     </div>
   );
 };

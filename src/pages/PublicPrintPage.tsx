@@ -7,6 +7,7 @@ import {
 } from "../utils/pdfGenerator";
 import { Invoice, BusinessProfile } from "../types/invoice";
 import { Loader2, Download } from "lucide-react";
+import { toast } from "sonner";
 
 export const PublicPrintPage = () => {
   const { id } = useParams<{ id: string }>();
@@ -74,7 +75,7 @@ export const PublicPrintPage = () => {
       await downloadPdf(invoice);
     } catch (err: any) {
       console.error("Manual download gagal:", err);
-      alert(
+      toast.error(
         `Gagal membuat PDF: ${err?.message || "kesalahan tidak diketahui"}`,
       );
     } finally {

@@ -5,10 +5,17 @@
 
 import React, { useState, useEffect } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
-import { BusinessProfile, Invoice, OpenWaConfig } from "./types/invoice";
+import {
+  BusinessProfile,
+  Invoice,
+  InvoiceBackup,
+  OpenWaConfig,
+} from "./types/invoice";
 import {
   defaultBusinessProfile,
   defaultOpenWaConfig,
+  defaultStoreApiConfig,
+  initialSampleInvoices,
 } from "./services/storage";
 import {
   deleteInvoiceRecord,
@@ -18,6 +25,7 @@ import {
   saveBusinessProfile,
   saveInvoiceRecord,
   saveOpenWaConfig,
+  saveStoreApiConfig,
 } from "./services/dbAdapter";
 import { Navbar } from "./components/Navbar";
 import { DashboardView } from "./components/DashboardView";
@@ -192,29 +200,33 @@ const MainApp = ({ onLogout }: { onLogout: () => void }) => {
     await saveOpenWaConfig(config);
   };
 
-  const handleImportData = async (data: {
-    invoices: Invoice[];
-    business: BusinessProfile;
-    config: OpenWaConfig;
-  }) => {
-    for (const inv of data.invoices) {
-      await saveInvoiceRecord(inv);
+  const handleRestoreData = async (data: InvoiceBackup) => {
+    const currentInvoices = await fetchAllInvoices();
+    const restoredInvoiceIds = new Set(data.invoices.map((invoice) => invoice.id));
+    for (const invoice of data.invoices) {
+      await saveInvoiceRecord(invoice);
     }
-    setBusiness(data.business);
+    for (const invoice of currentInvoices) {
+      if (!restoredInvoiceIds.has(invoice.id)) {
+        await deleteInvoiceRecord(invoice.id);
+      }
+    }
     await saveBusinessProfile(data.business);
-    if (data.config) {
-      setOpenWaConfig(data.config);
-      await saveOpenWaConfig(data.config);
-    }
+    await saveOpenWaConfig(data.config);
+    await saveStoreApiConfig(data.storeConfig || defaultStoreApiConfig);
+
+    setBusiness(data.business);
+    setOpenWaConfig(data.config);
     await refreshInvoices();
   };
 
   const handleResetData = async () => {
-    setBusiness(defaultBusinessProfile);
-    await saveBusinessProfile(defaultBusinessProfile);
-    setOpenWaConfig(defaultOpenWaConfig);
-    await saveOpenWaConfig(defaultOpenWaConfig);
-    await refreshInvoices();
+    await handleRestoreData({
+      business: defaultBusinessProfile,
+      config: defaultOpenWaConfig,
+      storeConfig: defaultStoreApiConfig,
+      invoices: initialSampleInvoices,
+    });
   };
 
   const activePrintInvoice =
@@ -287,7 +299,7 @@ const MainApp = ({ onLogout }: { onLogout: () => void }) => {
             invoices={invoices}
             onSaveBusiness={handleSaveBusinessProfile}
             onSaveConfig={handleSaveOpenWaConfig}
-            onImportData={handleImportData}
+            onRestoreData={handleRestoreData}
             onResetData={handleResetData}
             onRefreshData={refreshInvoices}
           />

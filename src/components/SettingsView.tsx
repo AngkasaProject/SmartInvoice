@@ -11,6 +11,7 @@ import {
   Invoice,
   WhatsAppConfig,
   StoreApiConfig,
+  InvoiceBackup,
 } from "../types/invoice";
 import { fetchStoreApiConfig, saveStoreApiConfig } from "../services/dbAdapter";
 
@@ -20,6 +21,7 @@ import { StoreSettings } from "./settings/StoreSettings";
 import { WhatsAppSettings } from "./settings/WhatsAppSettings";
 import { DatabaseSettings } from "./settings/DatabaseSettings";
 import { BackupSettings } from "./settings/BackupSettings";
+import { defaultStoreApiConfig } from "../services/storage";
 
 interface SettingsViewProps {
   business: BusinessProfile;
@@ -27,7 +29,7 @@ interface SettingsViewProps {
   invoices: Invoice[];
   onSaveBusiness: (updated: BusinessProfile) => void;
   onSaveConfig: (updated: WhatsAppConfig) => void;
-  onImportData: (data: any) => void;
+  onRestoreData: (data: InvoiceBackup) => Promise<void>;
   onResetData: () => void;
   onRefreshData?: () => void;
 }
@@ -80,7 +82,7 @@ export const SettingsView: React.FC<SettingsViewProps> = (props) => {
             onClick={() => setActiveTab("data")}
             className={`flex items-center gap-2 py-2 px-3 text-xs font-bold rounded-xl transition ${activeTab === "data" ? "bg-slate-800 text-white" : "text-slate-600 hover:bg-slate-100"}`}
           >
-            <Download className="w-4 h-4" /> Backup Data
+            <Download className="w-4 h-4" /> Backup & Restore
           </button>
         </div>
       </div>
@@ -117,7 +119,10 @@ export const SettingsView: React.FC<SettingsViewProps> = (props) => {
           business={props.business}
           config={props.config}
           storeConfig={storeConfig}
-          onImportData={props.onImportData}
+          onRestoreData={async (data) => {
+            await props.onRestoreData(data);
+            setStoreConfig(data.storeConfig || defaultStoreApiConfig);
+          }}
           onResetData={props.onResetData}
         />
       )}

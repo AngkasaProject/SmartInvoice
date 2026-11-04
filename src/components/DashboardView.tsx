@@ -3,6 +3,7 @@ import { Invoice, InvoiceStatus, BusinessProfile, OpenWaConfig } from '../types/
 import { formatIndoDate, formatRupiah, getDueDateInfo, formatDisplayPhone } from '../utils/formatters';
 import { exportInvoicesToCsv } from '../utils/csvExport';
 import { toast } from 'sonner';
+import { ConfirmDialog } from "./ConfirmDialog";
 import {
   FileText,
   CheckCircle2,
@@ -53,6 +54,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | InvoiceStatus>('all');
+  const [invoiceToDelete, setInvoiceToDelete] = useState<Invoice | null>(null);
 
   // Stats calculation
   const stats = useMemo(() => {
@@ -570,11 +572,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
                           {/* Delete */}
                           <button
-                            onClick={() => {
-                              if (window.confirm(`Hapus invoice ${inv.invoiceNumber}?`)) {
-                                onDeleteInvoice(inv.id);
-                              }
-                            }}
+                            onClick={() => setInvoiceToDelete(inv)}
                             className="p-1.5 text-rose-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
                             title="Hapus"
                           >
@@ -590,6 +588,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         )}
       </div>
+      <ConfirmDialog
+        isOpen={Boolean(invoiceToDelete)}
+        title="Hapus invoice?"
+        message={
+          invoiceToDelete
+            ? `Invoice ${invoiceToDelete.invoiceNumber} akan dihapus permanen. Tindakan ini tidak dapat dibatalkan.`
+            : ""
+        }
+        confirmLabel="Hapus invoice"
+        onCancel={() => setInvoiceToDelete(null)}
+        onConfirm={() => {
+          if (!invoiceToDelete) return;
+          onDeleteInvoice(invoiceToDelete.id);
+          setInvoiceToDelete(null);
+        }}
+      />
     </div>
   );
 };

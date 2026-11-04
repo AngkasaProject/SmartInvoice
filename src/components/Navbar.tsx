@@ -1,5 +1,6 @@
-import React from "react";
+import React, { useState } from "react";
 import { BusinessProfile } from "../types/invoice";
+import { ConfirmDialog } from "./ConfirmDialog";
 import {
   LayoutDashboard,
   FilePlus,
@@ -23,6 +24,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   business,
   onLogout,
 }) => {
+  const [isLogoutDialogOpen, setIsLogoutDialogOpen] = useState(false);
+
   return (
     <>
       {/* Top Header */}
@@ -125,11 +128,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               {/* TOMBOL LOGOUT */}
               {onLogout && (
                 <button
-                  onClick={() => {
-                    if (window.confirm("Apakah Anda yakin ingin logout?")) {
-                      onLogout();
-                    }
-                  }}
+                  onClick={() => setIsLogoutDialogOpen(true)}
                   className="p-2 text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-xl transition"
                   title="Logout"
                 >
@@ -191,6 +190,18 @@ export const Navbar: React.FC<NavbarProps> = ({
           <span className="text-[10px]">Setting</span>
         </button>
       </div>
+      <ConfirmDialog
+        isOpen={isLogoutDialogOpen}
+        title="Keluar dari akun?"
+        message="Anda perlu masuk kembali untuk mengakses data dan pengaturan aplikasi."
+        confirmLabel="Keluar"
+        variant="primary"
+        onCancel={() => setIsLogoutDialogOpen(false)}
+        onConfirm={() => {
+          setIsLogoutDialogOpen(false);
+          onLogout?.();
+        }}
+      />
     </>
   );
 };

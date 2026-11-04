@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { toast } from 'sonner';
+import { ConfirmDialog } from "./ConfirmDialog";
 
 interface InvoiceDetailModalProps {
   invoice: Invoice | null;
@@ -45,6 +46,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
 }) => {
   const [isDownloading, setIsDownloading] = useState(false);
   const [documentType, setDocumentType] = useState<'invoice' | 'kwitansi'>('invoice');
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
 
   if (!isOpen || !invoice) return null;
 
@@ -215,12 +217,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
 
             {/* Delete */}
             <button
-              onClick={() => {
-                if (window.confirm(`Yakin ingin menghapus invoice ${invoice.invoiceNumber}?`)) {
-                  onDelete(invoice.id);
-                  onClose();
-                }
-              }}
+              onClick={() => setIsDeleteDialogOpen(true)}
               className="p-2 rounded-lg text-rose-500 hover:bg-rose-50 transition"
               title="Hapus Invoice"
             >
@@ -251,6 +248,18 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
           </div>
         </div>
       </div>
+      <ConfirmDialog
+        isOpen={isDeleteDialogOpen}
+        title="Hapus invoice?"
+        message={`Invoice ${invoice.invoiceNumber} akan dihapus permanen. Tindakan ini tidak dapat dibatalkan.`}
+        confirmLabel="Hapus invoice"
+        onCancel={() => setIsDeleteDialogOpen(false)}
+        onConfirm={() => {
+          onDelete(invoice.id);
+          setIsDeleteDialogOpen(false);
+          onClose();
+        }}
+      />
     </div>
   );
 };

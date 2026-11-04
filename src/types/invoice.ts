@@ -156,6 +156,16 @@ export interface Invoice {
   updatedAt: string;
 }
 
+export interface InvoiceBackup {
+  version?: string;
+  appName?: string;
+  exportedAt?: string;
+  business: BusinessProfile;
+  config: WhatsAppConfig;
+  storeConfig?: StoreApiConfig | null;
+  invoices: Invoice[];
+}
+
 // ==========================================
 // 9. STATISTIK DASHBOARD
 // ==========================================
