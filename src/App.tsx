@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from "react";
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import {
   BusinessProfile,
   Invoice,
@@ -26,6 +26,9 @@ import {
   saveInvoiceRecord,
   saveOpenWaConfig,
   saveStoreApiConfig,
+  fetchPortalConfig,
+  savePortalConfig,
+  updateProductionStage,
 } from "./services/dbAdapter";
 import { Navbar } from "./components/Navbar";
 import { DashboardView } from "./components/DashboardView";
@@ -38,6 +41,9 @@ import { PostSaveActionModal } from "./components/PostSaveActionModal";
 import { InvoicePrintable } from "./components/InvoicePrintable";
 import { AuthPage } from "./components/auth/AuthPage";
 import { PublicPrintPage } from "./pages/PublicPrintPage"; // <-- Import halaman baru
+import { PublicPortalPage } from "./pages/PublicPortalPage";
+import { OrdersView } from "./components/OrdersView";
+import { defaultPortalConfig, PortalConfig } from "./types/portal";
 import { Toaster, toast } from "sonner";
 
 // ==========================================
@@ -50,9 +56,11 @@ const MainApp = ({ onLogout }: { onLogout: () => void }) => {
   );
   const [openWaConfig, setOpenWaConfig] =
     useState<OpenWaConfig>(defaultOpenWaConfig);
+  const [portalConfig, setPortalConfig] =
+    useState<PortalConfig>(defaultPortalConfig);
 
   const [currentView, setCurrentView] = useState<
-    "dashboard" | "create" | "edit" | "history" | "settings"
+    "dashboard" | "create" | "edit" | "history" | "orders" | "settings"
   >("dashboard");
   const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
   const [detailInvoice, setDetailInvoice] = useState<Invoice | null>(null);
@@ -81,6 +89,11 @@ const MainApp = ({ onLogout }: { onLogout: () => void }) => {
       .then((config) => setOpenWaConfig(config))
       .catch((err: Error) =>
         toast.error(`Gagal memuat pengaturan WhatsApp: ${err.message}`),
+      );
+    fetchPortalConfig()
+      .then(setPortalConfig)
+      .catch((err: Error) =>
+        toast.error(`Gagal memuat pengaturan portal: ${err.message}`),
       );
   }, []);
 
@@ -195,6 +208,24 @@ const MainApp = ({ onLogout }: { onLogout: () => void }) => {
     await saveBusinessProfile(profile);
   };
 
+  const handleSavePortalConfig = async (updated: PortalConfig) => {
+    const saved = await savePortalConfig(updated);
+    setPortalConfig(saved);
+  };
+
+  const handleUpdateProductionStage = async (
+    invoice: Invoice,
+    stage: number,
+  ) => {
+    await updateProductionStage(invoice.id, stage);
+    setInvoices((current) =>
+      current.map((item) =>
+        item.id === invoice.id ? { ...item, productionStage: stage } : item,
+      ),
+    );
+    toast.success(`Tahap ${invoice.invoiceNumber} berhasil diperbarui.`);
+  };
+
   const handleSaveOpenWaConfig = async (config: OpenWaConfig) => {
     setOpenWaConfig(config);
     await saveOpenWaConfig(config);
@@ -214,9 +245,13 @@ const MainApp = ({ onLogout }: { onLogout: () => void }) => {
     await saveBusinessProfile(data.business);
     await saveOpenWaConfig(data.config);
     await saveStoreApiConfig(data.storeConfig || defaultStoreApiConfig);
+    const restoredPortal = await savePortalConfig(
+      data.portalConfig || defaultPortalConfig,
+    );
 
     setBusiness(data.business);
     setOpenWaConfig(data.config);
+    setPortalConfig(restoredPortal);
     await refreshInvoices();
   };
 
@@ -225,6 +260,7 @@ const MainApp = ({ onLogout }: { onLogout: () => void }) => {
       business: defaultBusinessProfile,
       config: defaultOpenWaConfig,
       storeConfig: defaultStoreApiConfig,
+      portalConfig: defaultPortalConfig,
       invoices: initialSampleInvoices,
     });
   };
@@ -292,6 +328,14 @@ const MainApp = ({ onLogout }: { onLogout: () => void }) => {
           />
         )}
 
+        {currentView === "orders" && (
+          <OrdersView
+            invoices={invoices}
+            portal={portalConfig}
+            onUpdateStage={handleUpdateProductionStage}
+          />
+        )}
+
         {currentView === "settings" && (
           <SettingsView
             business={business}
@@ -302,6 +346,8 @@ const MainApp = ({ onLogout }: { onLogout: () => void }) => {
             onRestoreData={handleRestoreData}
             onResetData={handleResetData}
             onRefreshData={refreshInvoices}
+            portalConfig={portalConfig}
+            onSavePortalConfig={handleSavePortalConfig}
           />
         )}
       </main>
@@ -380,6 +426,20 @@ const MainApp = ({ onLogout }: { onLogout: () => void }) => {
   );
 };
 
+const LoginRoute: React.FC<{ onLoginSuccess: () => void }> = ({
+  onLoginSuccess,
+}) => {
+  const navigate = useNavigate();
+  return (
+    <AuthPage
+      onLoginSuccess={() => {
+        onLoginSuccess();
+        navigate("/dashboard", { replace: true });
+      }}
+    />
+  );
+};
+
 // ==========================================
 // APP UTAMA (ROUTING)
 // ==========================================
@@ -427,12 +487,24 @@ export default function App() {
     <>
       <Toaster richColors position="top-right" closeButton expand={false} />
       <Routes>
-        {/* RUTE PUBLIK (Tanpa Login) */}
+        <Route path="/" element={<PublicPortalPage />} />
         <Route path="/print/:id" element={<PublicPrintPage />} />
-
-        {/* RUTE UTAMA (Dengan Login) */}
         <Route
-          path="/*"
+          path="/login"
+          element={
+            isAuthLoading ? (
+              <div className="min-h-screen flex items-center justify-center bg-slate-50 text-sm text-slate-500">
+                Memeriksa sesi...
+              </div>
+            ) : isAuthenticated ? (
+              <Navigate to="/dashboard" replace />
+            ) : (
+              <LoginRoute onLoginSuccess={() => setIsAuthenticated(true)} />
+            )
+          }
+        />
+        <Route
+          path="/dashboard/*"
           element={
             isAuthLoading ? (
               <div className="min-h-screen flex items-center justify-center bg-slate-50 text-sm text-slate-500">
@@ -441,10 +513,11 @@ export default function App() {
             ) : isAuthenticated ? (
               <MainApp onLogout={handleLogout} />
             ) : (
-              <AuthPage onLoginSuccess={() => setIsAuthenticated(true)} />
+              <Navigate to="/login" replace />
             )
           }
         />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </>
   );

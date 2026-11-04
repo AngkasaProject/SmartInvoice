@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS invoices (
   whatsapp_sent_at TIMESTAMPTZ,
   whatsapp_recipient TEXT,
   whatsapp_last_log TEXT,
+  production_stage INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

@@ -1,3 +1,5 @@
+import type { PortalConfig } from "./portal";
+
 export type InvoiceStatus =
   | "draft"
   | "unpaid"
@@ -152,6 +154,7 @@ export interface Invoice {
   whatsappSentAt?: string;
   whatsappRecipient?: string;
   whatsappLastLog?: string;
+  productionStage?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -163,6 +166,7 @@ export interface InvoiceBackup {
   business: BusinessProfile;
   config: WhatsAppConfig;
   storeConfig?: StoreApiConfig | null;
+  portalConfig?: PortalConfig;
   invoices: Invoice[];
 }
 

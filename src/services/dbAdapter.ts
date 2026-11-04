@@ -7,6 +7,9 @@ import {
   StoreApiConfig,
 } from "../types/invoice";
 import {
+  PortalConfig,
+} from "../types/portal";
+import {
   defaultBusinessProfile,
   defaultOpenWaConfig,
   defaultStoreApiConfig,
@@ -288,7 +291,9 @@ export async function fetchSetting<T>(
 ): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(`/api/settings/${encodeURIComponent(key)}`);
+    res = await fetch(`/api/settings/${encodeURIComponent(key)}`, {
+      headers: databaseAuthHeaders(),
+    });
   } catch (err) {
     console.warn(`API offline, mengambil ${key} dari LocalStorage`, err);
     return getLocalSetting<T>(key, defaultValue);
@@ -309,7 +314,7 @@ export async function saveSettingRecord<T>(
   try {
     res = await fetch(`/api/settings/${encodeURIComponent(key)}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: databaseAuthHeaders(true),
       body: JSON.stringify({ value }),
     });
   } catch (err) {
@@ -334,6 +339,63 @@ export async function saveBusinessProfile(
   profile: BusinessProfile,
 ): Promise<void> {
   return saveSettingRecord<BusinessProfile>("business_profile", profile);
+}
+
+export async function fetchPortalConfig(): Promise<PortalConfig> {
+  const response = await fetch("/api/portal/config");
+  const data = await response.json();
+  if (!response.ok || !data.success || !data.portal) {
+    throw new Error(data.message || "Gagal memuat pengaturan portal.");
+  }
+  return data.portal as PortalConfig;
+}
+
+export async function savePortalConfig(
+  config: PortalConfig,
+): Promise<PortalConfig> {
+  const response = await fetch("/api/portal/config", {
+    method: "POST",
+    headers: databaseAuthHeaders(true),
+    body: JSON.stringify(config),
+  });
+  const data = await response.json();
+  if (!response.ok || !data.success || !data.portal) {
+    throw new Error(data.message || "Gagal menyimpan pengaturan portal.");
+  }
+  return data.portal as PortalConfig;
+}
+
+export async function updateProductionStage(
+  invoiceId: string,
+  stage: number,
+): Promise<void> {
+  const response = await fetch(
+    `/api/portal/orders/${encodeURIComponent(invoiceId)}/stage`,
+    {
+      method: "PATCH",
+      headers: databaseAuthHeaders(true),
+      body: JSON.stringify({ stage }),
+    },
+  );
+  const data = await response.json();
+  if (!response.ok || !data.success) {
+    throw new Error(data.message || "Gagal memperbarui tahap pesanan.");
+  }
+}
+
+export async function lookupPublicOrders(
+  lookup: string,
+): Promise<import("../types/portal").PublicOrderProgress[]> {
+  const response = await fetch("/api/public/orders/lookup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ lookup }),
+  });
+  const data = await response.json();
+  if (!response.ok || !data.success || !Array.isArray(data.orders)) {
+    throw new Error(data.message || "Gagal mencari pesanan.");
+  }
+  return data.orders;
 }
 
 export async function fetchOpenWaConfig(): Promise<WhatsAppConfig> {
@@ -397,9 +459,13 @@ CREATE TABLE IF NOT EXISTS invoices (
     whatsapp_sent_at TIMESTAMPTZ,
     whatsapp_recipient TEXT,
     whatsapp_last_log TEXT,
+    production_stage INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE invoices
+  ADD COLUMN IF NOT EXISTS production_stage INTEGER NOT NULL DEFAULT 0;
 
 -- Index pencarian cepat
 CREATE INDEX IF NOT EXISTS idx_invoices_number ON invoices(invoice_number);

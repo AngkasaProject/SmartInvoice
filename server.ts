@@ -15,6 +15,7 @@ import {
   createAdminUser,
   getAdminUser,
   getInvoiceById,
+  updateInvoiceProductionStage,
   createAuthSession,
   isAuthSessionValid,
   copyAdminUserToDefault,
@@ -35,6 +36,10 @@ import {
 } from "./server/storage.ts";
 import { hashPassword, verifyPassword } from "./src/utils/password.ts";
 import { defaultBusinessProfile } from "./src/services/storage.ts";
+import {
+  defaultPortalConfig,
+  normalizePortalConfig,
+} from "./src/types/portal.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -323,6 +328,131 @@ async function startServer() {
     }
   });
 
+  app.get("/api/portal/config", async (_req, res) => {
+    try {
+      const business =
+        (await getSetting("business_profile", null)) ?? defaultBusinessProfile;
+      const portal = normalizePortalConfig(
+        await getSetting("portal_config", defaultPortalConfig),
+      );
+      res.json({
+        success: true,
+        portal,
+        business: {
+          businessName: business.businessName,
+          tagline: business.tagline,
+          logoUrl: business.logoUrl,
+        },
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  app.post("/api/portal/config", async (req, res) => {
+    try {
+      if (!(await requireDatabaseSettingsSession(req, res))) return;
+      const portal = normalizePortalConfig(req.body);
+      await saveSetting("portal_config", portal);
+      res.json({ success: true, portal });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  app.post("/api/public/orders/lookup", async (req, res) => {
+    try {
+      const lookup = String(req.body.lookup || "").trim();
+      if (lookup.length < 3 || lookup.length > 100) {
+        return res.status(400).json({
+          success: false,
+          message: "Masukkan nomor pesanan atau WhatsApp yang valid.",
+        });
+      }
+
+      const invoices = await getAllInvoices();
+      const normalizedLookup = lookup.toLocaleLowerCase();
+      const digits = lookup.replace(/\D/g, "");
+      const normalizePhone = (phone: string) => {
+        const value = phone.replace(/\D/g, "");
+        return value.startsWith("0") ? `62${value.slice(1)}` : value;
+      };
+      const byInvoiceNumber = invoices.filter(
+        (invoice) =>
+          invoice.invoiceNumber?.toLocaleLowerCase() === normalizedLookup,
+      );
+      const byPhone =
+        digits.length >= 8
+          ? invoices.filter(
+              (invoice) =>
+                normalizePhone(invoice.client?.phone || "") ===
+                normalizePhone(lookup),
+            )
+          : [];
+      const matches = [...new Map(
+        [...byInvoiceNumber, ...byPhone]
+          .sort((a, b) =>
+            String(b.createdAt || "").localeCompare(String(a.createdAt || "")),
+          )
+          .map((invoice) => [invoice.id, invoice]),
+      ).values()].slice(0, 10);
+      if (matches.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Pesanan tidak ditemukan.",
+        });
+      }
+
+      const portal = normalizePortalConfig(
+        await getSetting("portal_config", defaultPortalConfig),
+      );
+      res.json({
+        success: true,
+        orders: matches.map((invoice) => ({
+          invoiceNumber: invoice.invoiceNumber,
+          currentStage: Math.min(
+            Math.max(0, Number(invoice.productionStage) || 0),
+            portal.workflowStages.length,
+          ),
+          workflowStages: portal.workflowStages,
+        })),
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  app.patch("/api/portal/orders/:id/stage", async (req, res) => {
+    try {
+      if (!(await requireDatabaseSettingsSession(req, res))) return;
+      const stage = Number(req.body.stage);
+      const portal = normalizePortalConfig(
+        await getSetting("portal_config", defaultPortalConfig),
+      );
+      if (
+        !Number.isInteger(stage) ||
+        stage < 0 ||
+        stage > portal.workflowStages.length
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Tahap produksi tidak valid.",
+        });
+      }
+      const invoice = await getInvoiceById(req.params.id);
+      if (!invoice) {
+        return res.status(404).json({
+          success: false,
+          message: "Invoice tidak ditemukan.",
+        });
+      }
+      await updateInvoiceProductionStage(invoice.id, stage);
+      res.json({ success: true, productionStage: stage });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
   app.get("/api/invoices", async (req, res) => {
     try {
       const invoices = await getAllInvoices();
@@ -355,6 +485,7 @@ async function startServer() {
   // ==========================================
   app.get("/api/settings/:key", async (req, res) => {
     try {
+      if (!(await requireDatabaseSettingsSession(req, res))) return;
       const key = req.params.key;
       if (key === "openwa_config") {
         const envWa = getWhatsAppEnvConfig();
@@ -370,6 +501,7 @@ async function startServer() {
 
   app.post("/api/settings/:key", async (req, res) => {
     try {
+      if (!(await requireDatabaseSettingsSession(req, res))) return;
       const key = req.params.key;
       if (key === "openwa_config" && getWhatsAppEnvConfig()) {
         return res

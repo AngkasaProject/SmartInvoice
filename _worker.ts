@@ -14,6 +14,10 @@ import {
 } from "@aws-sdk/client-s3";
 import { hashPassword, verifyPassword } from "./src/utils/password";
 import { defaultBusinessProfile } from "./src/services/storage";
+import {
+  defaultPortalConfig,
+  normalizePortalConfig,
+} from "./src/types/portal";
 
 interface D1Result<T = Record<string, unknown>> {
   results?: T[];
@@ -362,6 +366,7 @@ function mapInvoiceRow(row: Record<string, any>) {
     whatsappSentAt: row.whatsapp_sent_at,
     whatsappRecipient: row.whatsapp_recipient,
     whatsappLastLog: row.whatsapp_last_log,
+    productionStage: Number(row.production_stage) || 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -398,6 +403,38 @@ async function getSettingValue(env: Env, key: string) {
     [key],
   );
   return row ? parseJson(row.value, null) : null;
+}
+
+async function saveSettingValue(env: Env, key: string, value: unknown) {
+  const driver = requireDatabase(env);
+  const updatedAt = new Date().toISOString();
+  if (driver === "supabase") {
+    const { error } = await getSupabase(env)
+      .from("settings")
+      .upsert({ key, value, updated_at: updatedAt }, { onConflict: "key" });
+    if (error) throw error;
+    return;
+  }
+  if (driver === "neon") {
+    await getNeon(env).query(
+      `INSERT INTO settings (key, value, updated_at)
+       VALUES ($1, $2::jsonb, $3)
+       ON CONFLICT (key) DO UPDATE SET
+         value = EXCLUDED.value,
+         updated_at = EXCLUDED.updated_at`,
+      [key, JSON.stringify(value ?? null), updatedAt],
+    );
+    return;
+  }
+  await executeQuery(
+    env,
+    `INSERT INTO settings (key, value, updated_at)
+     VALUES (?, ?, ?)
+     ON CONFLICT (key) DO UPDATE SET
+       value = excluded.value,
+       updated_at = excluded.updated_at`,
+    [key, JSON.stringify(value ?? null), updatedAt],
+  );
 }
 
 async function getUserByUsername(env: Env, username: string) {
@@ -532,7 +569,7 @@ export default {
     const url = new URL(request.url);
     const corsHeaders = {
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
       "Access-Control-Allow-Headers":
         "Content-Type, Authorization, api_key, X-API-Key",
     };
@@ -581,6 +618,203 @@ export default {
           {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           },
+        );
+      }
+
+      if (url.pathname === "/api/portal/config" && request.method === "GET") {
+        const business =
+          (await getSettingValue(env, "business_profile")) ??
+          defaultBusinessProfile;
+        const portal = normalizePortalConfig(
+          await getSettingValue(env, "portal_config"),
+        );
+        return new Response(
+          JSON.stringify({
+            success: true,
+            portal,
+            business: {
+              businessName: business.businessName,
+              tagline: business.tagline,
+              logoUrl: business.logoUrl,
+            },
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      if (url.pathname === "/api/public/orders/lookup" && request.method === "POST") {
+        const body: any = await request.json();
+        const lookup = String(body.lookup || "").trim();
+        if (lookup.length < 3 || lookup.length > 100) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              message: "Masukkan nomor pesanan atau WhatsApp yang valid.",
+            }),
+            {
+              status: 400,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            },
+          );
+        }
+
+        const driver = requireDatabase(env);
+        let rows: Record<string, any>[];
+        if (driver === "supabase") {
+          const { data, error } = await getSupabase(env)
+            .from("invoices")
+            .select(
+              "id, invoice_number, client_data, production_stage, created_at",
+            );
+          if (error) throw error;
+          rows = data || [];
+        } else {
+          rows = await queryRows(
+            env,
+            "SELECT id, invoice_number, client_data, production_stage, created_at FROM invoices",
+          );
+        }
+        const normalizedLookup = lookup.toLocaleLowerCase();
+        const digits = lookup.replace(/\D/g, "");
+        const normalizePhone = (phone: string) => {
+          const value = phone.replace(/\D/g, "");
+          return value.startsWith("0") ? `62${value.slice(1)}` : value;
+        };
+        const matchingRows = rows
+          .filter((row) => {
+            const client =
+              typeof row.client_data === "string"
+                ? parseJson(row.client_data, {})
+                : row.client_data || {};
+            return (
+              String(row.invoice_number || "").toLocaleLowerCase() ===
+                normalizedLookup ||
+              (digits.length >= 8 &&
+                normalizePhone(String(client.phone || "")) ===
+                  normalizePhone(lookup))
+            );
+          })
+          .sort((a, b) =>
+            String(b.created_at || "").localeCompare(String(a.created_at || "")),
+          )
+          .slice(0, 10);
+        if (matchingRows.length === 0) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              message: "Pesanan tidak ditemukan.",
+            }),
+            {
+              status: 404,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            },
+          );
+        }
+        const portal = normalizePortalConfig(
+          await getSettingValue(env, "portal_config"),
+        );
+        return new Response(
+          JSON.stringify({
+            success: true,
+            orders: matchingRows.map((row) => ({
+              invoiceNumber: row.invoice_number,
+              currentStage: Math.min(
+                Math.max(0, Number(row.production_stage) || 0),
+                portal.workflowStages.length,
+              ),
+              workflowStages: portal.workflowStages,
+            })),
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      if (url.pathname === "/api/portal/config" && request.method === "POST") {
+        if (!(await hasAdminSession(request, env))) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              message: "Sesi admin tidak valid atau telah kedaluwarsa.",
+            }),
+            {
+              status: 401,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            },
+          );
+        }
+        const portal = normalizePortalConfig(await request.json());
+        await saveSettingValue(env, "portal_config", portal);
+        return new Response(JSON.stringify({ success: true, portal }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const stageMatch = url.pathname.match(/^\/api\/portal\/orders\/([^/]+)\/stage$/);
+      if (stageMatch && request.method === "PATCH") {
+        if (!(await hasAdminSession(request, env))) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              message: "Sesi admin tidak valid atau telah kedaluwarsa.",
+            }),
+            {
+              status: 401,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            },
+          );
+        }
+        const id = decodeURIComponent(stageMatch[1]);
+        const body: any = await request.json();
+        const stage = Number(body.stage);
+        const portal = normalizePortalConfig(
+          await getSettingValue(env, "portal_config"),
+        );
+        if (
+          !Number.isInteger(stage) ||
+          stage < 0 ||
+          stage > portal.workflowStages.length
+        ) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              message: "Tahap produksi tidak valid.",
+            }),
+            {
+              status: 400,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            },
+          );
+        }
+        const invoice = await getInvoiceRow(env, id);
+        if (!invoice) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              message: "Invoice tidak ditemukan.",
+            }),
+            {
+              status: 404,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            },
+          );
+        }
+        const driver = requireDatabase(env);
+        if (driver === "supabase") {
+          const { error } = await getSupabase(env)
+            .from("invoices")
+            .update({ production_stage: stage, updated_at: new Date().toISOString() })
+            .eq("id", id);
+          if (error) throw error;
+        } else {
+          await executeQuery(
+            env,
+            "UPDATE invoices SET production_stage = ?, updated_at = ? WHERE id = ?",
+            [stage, new Date().toISOString(), id],
+          );
+        }
+        return new Response(
+          JSON.stringify({ success: true, productionStage: stage }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
 
@@ -1103,6 +1337,10 @@ export default {
           whatsapp_sent_at: body.whatsappSentAt || null,
           whatsapp_recipient: body.whatsappRecipient || null,
           whatsapp_last_log: body.whatsappLastLog || null,
+          production_stage: Math.max(
+            0,
+            Math.floor(Number(body.productionStage) || 0),
+          ),
           created_at: body.createdAt || new Date().toISOString(),
           updated_at: body.updatedAt || new Date().toISOString(),
         };
@@ -1173,6 +1411,19 @@ export default {
       // 5. ENDPOINT SETTINGS
       // ==========================================
       if (url.pathname.startsWith("/api/settings/")) {
+        if (!(await hasAdminSession(request, env))) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              message:
+                "Sesi admin tidak valid atau telah kedaluwarsa. Silakan login kembali.",
+            }),
+            {
+              status: 401,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            },
+          );
+        }
         const key = url.pathname.replace("/api/settings/", "");
 
         if (key === "openwa_config" && getWhatsAppEnvConfig(env)) {

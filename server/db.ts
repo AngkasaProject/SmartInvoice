@@ -63,10 +63,20 @@ db.run(`
     whatsapp_sent_at TEXT,
     whatsapp_recipient TEXT,
     whatsapp_last_log TEXT,
+    production_stage INTEGER NOT NULL DEFAULT 0,
     created_at TEXT,
     updated_at TEXT
   )
 `);
+
+const invoiceColumns = db.query("PRAGMA table_info(invoices)").all() as {
+  name: string;
+}[];
+if (!invoiceColumns.some((column) => column.name === "production_stage")) {
+  db.run(
+    "ALTER TABLE invoices ADD COLUMN production_stage INTEGER NOT NULL DEFAULT 0",
+  );
+}
 
 db.run(
   `CREATE INDEX IF NOT EXISTS idx_invoices_number ON invoices(invoice_number)`,
@@ -225,6 +235,7 @@ function mapSqliteRowToApp(row: any): any {
     whatsappSentAt: row.whatsapp_sent_at,
     whatsappRecipient: row.whatsapp_recipient,
     whatsappLastLog: row.whatsapp_last_log,
+    productionStage: Number(row.production_stage) || 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -260,6 +271,7 @@ function mapSupabaseInvoiceToApp(row: any): any {
     whatsappSentAt: row.whatsapp_sent_at,
     whatsappRecipient: row.whatsapp_recipient,
     whatsappLastLog: row.whatsapp_last_log,
+    productionStage: Number(row.production_stage) || 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -295,6 +307,7 @@ function mapAppInvoiceToSupabase(inv: any): Record<string, any> {
     whatsapp_sent_at: inv.whatsappSentAt || null,
     whatsapp_recipient: inv.whatsappRecipient || null,
     whatsapp_last_log: inv.whatsappLastLog || null,
+    production_stage: Math.max(0, Math.floor(Number(inv.productionStage) || 0)),
     created_at: inv.createdAt || new Date().toISOString(),
     updated_at: inv.updatedAt || new Date().toISOString(),
   };
@@ -406,11 +419,11 @@ export async function saveInvoice(
       down_payment, remaining_balance,
       paid_at, paid_method,
       whatsapp_status, whatsapp_sent_at, whatsapp_recipient, whatsapp_last_log,
-      created_at, updated_at
+      production_stage, created_at, updated_at
     ) VALUES (
       ?, ?, ?, ?, ?,
       ?, ?,
-      ?, ?, ?, ?,
+      ?, ?, ?, ?, ?,
       ?, ?, ?, ?,
       ?, ?, ?,
       ?, ?,
@@ -447,6 +460,7 @@ export async function saveInvoice(
       whatsapp_sent_at = excluded.whatsapp_sent_at,
       whatsapp_recipient = excluded.whatsapp_recipient,
       whatsapp_last_log = excluded.whatsapp_last_log,
+      production_stage = excluded.production_stage,
       updated_at = excluded.updated_at`,
     [
       invoice.id,
@@ -477,10 +491,39 @@ export async function saveInvoice(
       invoice.whatsappSentAt ?? null,
       invoice.whatsappRecipient ?? null,
       invoice.whatsappLastLog ?? null,
+      Math.max(0, Math.floor(Number(invoice.productionStage) || 0)),
       invoice.createdAt ?? new Date().toISOString(),
       invoice.updatedAt ?? new Date().toISOString(),
     ],
   );
+}
+
+export async function updateInvoiceProductionStage(
+  id: string,
+  productionStage: number,
+): Promise<void> {
+  if (isSupabaseActive()) {
+    const { error } = await getSupabase()
+      .from("invoices")
+      .update({
+        production_stage: productionStage,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id);
+    if (error) throw error;
+    return;
+  }
+  if (isNeonActive()) {
+    await getNeon().query(
+      "UPDATE invoices SET production_stage = $1, updated_at = $2 WHERE id = $3",
+      [productionStage, new Date().toISOString(), id],
+    );
+    return;
+  }
+  assertSqliteActive();
+  db.query(
+    "UPDATE invoices SET production_stage = ?, updated_at = ? WHERE id = ?",
+  ).run(productionStage, new Date().toISOString(), id);
 }
 
 export async function deleteInvoice(id: string): Promise<void> {

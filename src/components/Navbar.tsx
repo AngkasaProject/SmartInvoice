@@ -9,11 +9,12 @@ import {
   Store,
   Plus,
   LogOut,
+  Factory,
 } from "lucide-react";
 
 interface NavbarProps {
-  currentView: "dashboard" | "create" | "edit" | "history" | "settings";
-  onChangeView: (view: "dashboard" | "create" | "history" | "settings") => void;
+  currentView: "dashboard" | "create" | "edit" | "history" | "orders" | "settings";
+  onChangeView: (view: "dashboard" | "create" | "history" | "orders" | "settings") => void;
   business: BusinessProfile;
   onLogout?: () => void;
 }
@@ -102,6 +103,18 @@ export const Navbar: React.FC<NavbarProps> = ({
               </button>
 
               <button
+                onClick={() => onChangeView("orders")}
+                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition ${
+                  currentView === "orders"
+                    ? "bg-indigo-50 text-indigo-700 shadow-xs"
+                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                }`}
+              >
+                <Factory className="w-4 h-4" />
+                <span>Pesanan</span>
+              </button>
+
+              <button
                 onClick={() => onChangeView("settings")}
                 className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition ${
                   currentView === "settings"
@@ -176,6 +189,18 @@ export const Navbar: React.FC<NavbarProps> = ({
         >
           <History className="w-5 h-5 mb-0.5" />
           <span className="text-[10px]">Riwayat</span>
+        </button>
+
+        <button
+          onClick={() => onChangeView("orders")}
+          className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl transition ${
+            currentView === "orders"
+              ? "text-indigo-600 font-bold"
+              : "text-slate-500 hover:text-slate-900"
+          }`}
+        >
+          <Factory className="w-5 h-5 mb-0.5" />
+          <span className="text-[10px]">Pesanan</span>
         </button>
 
         <button

@@ -38,6 +38,9 @@ Didesain agar bisa berjalan di **Docker (Self-Hosted)** maupun **Cloudflare Work
 - **Penyimpanan Gambar Cloud**: Kredensial storage Neon dan Supabase dapat diatur dari panel; Workers tetap menggunakan binding R2 saat D1 aktif.
 - **Hybrid & Fallback Storage**: Konfigurasi sensitif bisa dikunci via Environment Variables (`.env`). Jika server tidak tersedia, aplikasi dapat memakai `localStorage` browser.
 - **Integrasi API Toko Online**: Endpoint Webhook untuk menerima pesanan dari WooCommerce, Shopify, atau custom store.
+- **Landing page & pelacakan pesanan**: Halaman publik di `/` menampilkan tautan toko, tombol cek pesanan, dan progres produksi yang dapat diatur manual dari dashboard.
+
+Landing page, login, dan dashboard berjalan di satu deployment: `/` untuk portal pelanggan, `/login` untuk admin, dan `/dashboard` untuk pengelolaan invoice serta tahap produksi. Pengaturan tautan dan alur dapat ditemukan di Pengaturan → Portal Publik; progres tiap invoice di menu Pesanan.
 
 ---
 
@@ -184,7 +187,7 @@ docker compose up -d --build
 
 ### Setup Neon PostgreSQL
 
-Neon dapat digunakan dari Docker maupun Workers. Jalankan SQL dari [`migrations/neon/0001_init.sql`](./migrations/neon/0001_init.sql) di SQL Editor Neon sebelum memilih Neon di Pengaturan → Database. Jika `DATABASE_DRIVER`, kredensial provider, atau `SUPABASE_STORAGE_BUCKET` diatur lewat environment, pengaturan database akan dikunci oleh environment.
+Neon dapat digunakan dari Docker maupun Workers. Jalankan SQL dari [`migrations/neon/0001_init.sql`](./migrations/neon/0001_init.sql) dan [`migrations/neon/0002_production_stage.sql`](./migrations/neon/0002_production_stage.sql) di SQL Editor Neon sebelum memilih Neon di Pengaturan → Database. Migration kedua menambahkan kolom tahap produksi pada invoice. Jika `DATABASE_DRIVER`, kredensial provider, atau `SUPABASE_STORAGE_BUCKET` diatur lewat environment, pengaturan database akan dikunci oleh environment.
 
 ### ☁️ Deployment via Cloudflare Workers (Cloud)
 
@@ -225,7 +228,7 @@ Migration membuat tabel invoice, settings, users, sesi admin, dan registry konfi
 npx wrangler d1 migrations apply smartinvoice --remote
 ```
 
-Pastikan perintah selesai tanpa error sebelum deploy. Untuk database yang telah menjalankan migration sebelumnya, perintah yang sama akan menerapkan migration baru [`migrations/d1/0002_database_registry.sql`](./migrations/d1/0002_database_registry.sql).
+Pastikan perintah selesai tanpa error sebelum deploy. Untuk database yang telah menjalankan migration sebelumnya, perintah yang sama akan menerapkan migration baru, termasuk [`migrations/d1/0003_production_stage.sql`](./migrations/d1/0003_production_stage.sql) untuk tahap produksi.
 
 #### 4. Build dan deploy
 

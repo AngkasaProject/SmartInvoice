@@ -10,12 +10,14 @@ import { Database, Download, Upload, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { defaultStoreApiConfig } from "../../services/storage";
+import { PortalConfig } from "../../types/portal";
 
 interface BackupSettingsProps {
   invoices: Invoice[];
   business: BusinessProfile;
   config: WhatsAppConfig;
   storeConfig?: StoreApiConfig | null;
+  portalConfig: PortalConfig;
   onRestoreData: (data: InvoiceBackup) => Promise<void>;
   onResetData: () => void;
 }
@@ -25,6 +27,7 @@ export const BackupSettings: React.FC<BackupSettingsProps> = ({
   business,
   config,
   storeConfig,
+  portalConfig,
   onRestoreData,
   onResetData,
 }) => {
@@ -38,12 +41,13 @@ export const BackupSettings: React.FC<BackupSettingsProps> = ({
 
   const handleExport = () => {
     const backupData = {
-      version: "2.0",
+      version: "2.1",
       appName: "SmartInvoice",
       exportedAt: new Date().toISOString(),
       business,
       config,
       storeConfig: storeConfig || defaultStoreApiConfig,
+      portalConfig,
       invoices,
     };
     const blob = new Blob([JSON.stringify(backupData, null, 2)], {

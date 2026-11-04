@@ -5,6 +5,7 @@ import {
   Server,
   Database,
   Download,
+  Link2,
 } from "lucide-react";
 import {
   BusinessProfile,
@@ -21,7 +22,9 @@ import { StoreSettings } from "./settings/StoreSettings";
 import { WhatsAppSettings } from "./settings/WhatsAppSettings";
 import { DatabaseSettings } from "./settings/DatabaseSettings";
 import { BackupSettings } from "./settings/BackupSettings";
+import { PortalSettings } from "./settings/PortalSettings";
 import { defaultStoreApiConfig } from "../services/storage";
+import { PortalConfig } from "../types/portal";
 
 interface SettingsViewProps {
   business: BusinessProfile;
@@ -32,11 +35,13 @@ interface SettingsViewProps {
   onRestoreData: (data: InvoiceBackup) => Promise<void>;
   onResetData: () => void;
   onRefreshData?: () => void;
+  portalConfig: PortalConfig;
+  onSavePortalConfig: (updated: PortalConfig) => Promise<void>;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = (props) => {
   const [activeTab, setActiveTab] = useState<
-    "business" | "store" | "whatsapp" | "database" | "data"
+    "business" | "portal" | "store" | "whatsapp" | "database" | "data"
   >("business");
   const [storeConfig, setStoreConfig] = useState<StoreApiConfig | null>(null);
 
@@ -59,6 +64,12 @@ export const SettingsView: React.FC<SettingsViewProps> = (props) => {
             className={`flex items-center gap-2 py-2 px-3 text-xs font-bold rounded-xl transition ${activeTab === "business" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}
           >
             <Building2 className="w-4 h-4" /> Profil Usaha
+          </button>
+          <button
+            onClick={() => setActiveTab("portal")}
+            className={`flex items-center gap-2 py-2 px-3 text-xs font-bold rounded-xl transition ${activeTab === "portal" ? "bg-orange-500 text-white" : "text-slate-600 hover:bg-slate-100"}`}
+          >
+            <Link2 className="w-4 h-4" /> Portal Publik
           </button>
           <button
             onClick={() => setActiveTab("store")}
@@ -95,6 +106,13 @@ export const SettingsView: React.FC<SettingsViewProps> = (props) => {
         />
       )}
 
+      {activeTab === "portal" && (
+        <PortalSettings
+          config={props.portalConfig}
+          onSave={props.onSavePortalConfig}
+        />
+      )}
+
       {activeTab === "store" && storeConfig && (
         <StoreSettings
           storeConfig={storeConfig}
@@ -119,6 +137,7 @@ export const SettingsView: React.FC<SettingsViewProps> = (props) => {
           business={props.business}
           config={props.config}
           storeConfig={storeConfig}
+          portalConfig={props.portalConfig}
           onRestoreData={async (data) => {
             await props.onRestoreData(data);
             setStoreConfig(data.storeConfig || defaultStoreApiConfig);

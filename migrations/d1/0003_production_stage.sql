@@ -1,0 +1,1 @@
+ALTER TABLE invoices ADD COLUMN production_stage INTEGER NOT NULL DEFAULT 0;
