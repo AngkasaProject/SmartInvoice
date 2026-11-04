@@ -5,6 +5,13 @@
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { neon } from "@neondatabase/serverless";
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadBucketCommand,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
 import { hashPassword, verifyPassword } from "./src/utils/password";
 
 interface D1Result<T = Record<string, unknown>> {
@@ -59,12 +66,20 @@ interface Env {
 
 type WorkerDatabaseConfig = {
   activeDriver: WorkerDatabaseDriver;
-  supabase: { url: string; anonKey: string };
-  neon: { connectionString: string };
+  supabase: { url: string; anonKey: string; storageBucket?: string };
+  neon: {
+    connectionString: string;
+    storageEndpoint?: string;
+    storageRegion?: string;
+    storageBucket?: string;
+    storageAccessKeyId?: string;
+    storageSecretAccessKey?: string;
+  };
 };
 
 const runtimeDatabaseConfigs = new WeakMap<object, WorkerDatabaseConfig>();
 const supabaseClients = new Map<string, SupabaseClient>();
+const neonStorageClients = new Map<string, S3Client>();
 
 function getRuntimeDatabaseConfig(env: Env): WorkerDatabaseConfig {
   return (
@@ -73,8 +88,16 @@ function getRuntimeDatabaseConfig(env: Env): WorkerDatabaseConfig {
       supabase: {
         url: env.SUPABASE_URL || "",
         anonKey: env.SUPABASE_ANON_KEY || "",
+        storageBucket: env.SUPABASE_STORAGE_BUCKET || "smartinvoice-assets",
       },
-      neon: { connectionString: env.NEON_DATABASE_URL || "" },
+      neon: {
+        connectionString: env.NEON_DATABASE_URL || "",
+        storageEndpoint: "",
+        storageRegion: "",
+        storageBucket: "smartinvoice-assets",
+        storageAccessKeyId: "",
+        storageSecretAccessKey: "",
+      },
     }
   );
 }
@@ -124,10 +147,19 @@ async function resolveRuntimeDatabaseConfig(
     supabase: {
       url: env.SUPABASE_URL || stored.supabase?.url || "",
       anonKey: env.SUPABASE_ANON_KEY || stored.supabase?.anonKey || "",
+      storageBucket:
+        env.SUPABASE_STORAGE_BUCKET ||
+        stored.supabase?.storageBucket ||
+        "smartinvoice-assets",
     },
     neon: {
       connectionString:
         env.NEON_DATABASE_URL || stored.neon?.connectionString || "",
+      storageEndpoint: stored.neon?.storageEndpoint || "",
+      storageRegion: stored.neon?.storageRegion || "",
+      storageBucket: stored.neon?.storageBucket || "smartinvoice-assets",
+      storageAccessKeyId: stored.neon?.storageAccessKeyId || "",
+      storageSecretAccessKey: stored.neon?.storageSecretAccessKey || "",
     },
   };
   runtimeDatabaseConfigs.set(env, config);
@@ -144,6 +176,39 @@ function getSupabase(env: Env): SupabaseClient {
   if (!client) {
     client = createClient(config.supabase.url, config.supabase.anonKey);
     supabaseClients.set(cacheKey, client);
+  }
+  return client;
+}
+
+function getNeonStorageClient(env: Env): S3Client {
+  const config = getRuntimeDatabaseConfig(env).neon;
+  if (
+    !config.storageEndpoint ||
+    !config.storageRegion ||
+    !config.storageAccessKeyId ||
+    !config.storageSecretAccessKey
+  ) {
+    throw new Error("Konfigurasi Neon Object Storage belum lengkap.");
+  }
+  const cacheKey = [
+    config.storageEndpoint,
+    config.storageRegion,
+    config.storageAccessKeyId,
+    config.storageSecretAccessKey,
+  ].join(":");
+  let client = neonStorageClients.get(cacheKey);
+  if (!client) {
+    client = new S3Client({
+      region: config.storageRegion,
+      endpoint: config.storageEndpoint,
+      credentials: {
+        accessKeyId: config.storageAccessKeyId,
+        secretAccessKey: config.storageSecretAccessKey,
+      },
+      forcePathStyle: true,
+      requestChecksumCalculation: "WHEN_REQUIRED",
+    });
+    neonStorageClients.set(cacheKey, client);
   }
   return client;
 }
@@ -660,17 +725,33 @@ export default {
             url: runtimeConfig.supabase.url,
             anonKey: "",
             configured: Boolean(runtimeConfig.supabase.anonKey),
+            storageBucket:
+              runtimeConfig.supabase.storageBucket || "smartinvoice-assets",
           },
           neon: {
             configured: Boolean(runtimeConfig.neon.connectionString),
             connectionString: "",
+            storageEndpoint: runtimeConfig.neon.storageEndpoint || "",
+            storageRegion: runtimeConfig.neon.storageRegion || "",
+            storageBucket:
+              runtimeConfig.neon.storageBucket || "smartinvoice-assets",
+            storageAccessKeyId: "",
+            storageSecretAccessKey: "",
+            storageConfigured: Boolean(
+              runtimeConfig.neon.storageEndpoint &&
+                runtimeConfig.neon.storageRegion &&
+                runtimeConfig.neon.storageBucket &&
+                runtimeConfig.neon.storageAccessKeyId &&
+                runtimeConfig.neon.storageSecretAccessKey,
+            ),
           },
         };
         const isEnvLocked = Boolean(
           env.DATABASE_DRIVER ||
             env.NEON_DATABASE_URL ||
             env.SUPABASE_URL ||
-            env.SUPABASE_ANON_KEY,
+            env.SUPABASE_ANON_KEY ||
+            env.SUPABASE_STORAGE_BUCKET,
         );
         return new Response(
           JSON.stringify({
@@ -697,7 +778,8 @@ export default {
           env.DATABASE_DRIVER ||
           env.NEON_DATABASE_URL ||
           env.SUPABASE_URL ||
-          env.SUPABASE_ANON_KEY
+          env.SUPABASE_ANON_KEY ||
+          env.SUPABASE_STORAGE_BUCKET
         ) {
           return new Response(
             JSON.stringify({ success: false, message: "Konfigurasi database dikunci oleh Environment Variable." }),
@@ -712,10 +794,30 @@ export default {
           supabase: {
             url: body.supabase?.url || previous.supabase.url,
             anonKey: body.supabase?.anonKey || previous.supabase.anonKey,
+            storageBucket:
+              body.supabase?.storageBucket ||
+              previous.supabase.storageBucket ||
+              "smartinvoice-assets",
           },
           neon: {
             connectionString:
               body.neon?.connectionString || previous.neon.connectionString,
+            storageEndpoint:
+              body.neon?.storageEndpoint || previous.neon.storageEndpoint || "",
+            storageRegion:
+              body.neon?.storageRegion || previous.neon.storageRegion || "",
+            storageBucket:
+              body.neon?.storageBucket ||
+              previous.neon.storageBucket ||
+              "smartinvoice-assets",
+            storageAccessKeyId:
+              body.neon?.storageAccessKeyId ||
+              previous.neon.storageAccessKeyId ||
+              "",
+            storageSecretAccessKey:
+              body.neon?.storageSecretAccessKey ||
+              previous.neon.storageSecretAccessKey ||
+              "",
           },
         };
         if (
@@ -740,6 +842,19 @@ export default {
         ) {
           return new Response(
             JSON.stringify({ success: false, message: "Connection string Neon wajib diisi." }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+        if (
+          config.activeDriver === "neon" &&
+          (!config.neon.storageEndpoint ||
+            !config.neon.storageRegion ||
+            !config.neon.storageBucket ||
+            !config.neon.storageAccessKeyId ||
+            !config.neon.storageSecretAccessKey)
+        ) {
+          return new Response(
+            JSON.stringify({ success: false, message: "Konfigurasi Neon Object Storage wajib diisi." }),
             { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
           );
         }
@@ -774,14 +889,91 @@ export default {
                 url: config.supabase.url,
                 anonKey: "",
                 configured: Boolean(config.supabase.anonKey),
+                storageBucket: config.supabase.storageBucket,
               },
-              neon: { configured: Boolean(config.neon.connectionString), connectionString: "" },
+              neon: {
+                configured: Boolean(config.neon.connectionString),
+                connectionString: "",
+                storageEndpoint: config.neon.storageEndpoint,
+                storageRegion: config.neon.storageRegion,
+                storageBucket: config.neon.storageBucket,
+                storageAccessKeyId: "",
+                storageSecretAccessKey: "",
+                storageConfigured: Boolean(
+                  config.neon.storageEndpoint &&
+                    config.neon.storageRegion &&
+                    config.neon.storageBucket &&
+                    config.neon.storageAccessKeyId &&
+                    config.neon.storageSecretAccessKey,
+                ),
+              },
             },
             message: "Konfigurasi disimpan",
           }),
           {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           },
+        );
+      }
+
+      if (url.pathname === "/api/storage/test" && request.method === "POST") {
+        if (!(await hasAdminSession(request, env))) {
+          return new Response(
+            JSON.stringify({ success: false, message: "Sesi admin tidak valid atau telah kedaluwarsa." }),
+            { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+        const body: any = await request.json();
+        const config = getRuntimeDatabaseConfig(env);
+        const start = Date.now();
+        if (body.provider === "neon") {
+          const endpoint = body.credentials?.endpoint || config.neon.storageEndpoint;
+          const region = body.credentials?.region || config.neon.storageRegion;
+          const bucket = body.credentials?.bucket || config.neon.storageBucket;
+          const accessKeyId =
+            body.credentials?.accessKeyId || config.neon.storageAccessKeyId;
+          const secretAccessKey =
+            body.credentials?.secretAccessKey ||
+            config.neon.storageSecretAccessKey;
+          if (!endpoint || !region || !bucket || !accessKeyId || !secretAccessKey) {
+            throw new Error("Konfigurasi Neon Object Storage belum lengkap.");
+          }
+          const storageClient = new S3Client({
+            region,
+            endpoint,
+            credentials: { accessKeyId, secretAccessKey },
+            forcePathStyle: true,
+            requestChecksumCalculation: "WHEN_REQUIRED",
+          });
+          await storageClient.send(new HeadBucketCommand({ Bucket: bucket }));
+        } else if (body.provider === "supabase") {
+          const url = body.credentials?.url || config.supabase.url;
+          const anonKey = body.credentials?.anonKey || config.supabase.anonKey;
+          if (!url || !anonKey) {
+            throw new Error("URL dan Anon Key Supabase belum dikonfigurasi.");
+          }
+          const client = createClient(
+            url,
+            anonKey,
+          );
+          const { error } = await client.storage
+            .from(
+              body.credentials?.bucket ||
+                config.supabase.storageBucket ||
+                "smartinvoice-assets",
+            )
+            .list("", { limit: 1 });
+          if (error) throw error;
+        } else {
+          throw new Error(`Provider storage '${body.provider}' tidak didukung.`);
+        }
+        return new Response(
+          JSON.stringify({
+            success: true,
+            message: `Berhasil terhubung ke ${body.provider} Object Storage.`,
+            latencyMs: Date.now() - start,
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
 
@@ -1366,11 +1558,6 @@ export default {
       }
 
       if (url.pathname === "/api/upload" && request.method === "POST") {
-        if (!env.R2_BUCKET) {
-          throw new Error(
-            "Binding R2_BUCKET belum dikonfigurasi untuk penyimpanan gambar.",
-          );
-        }
         const body: any = await request.json();
         if (typeof body.image !== "string" || !body.image) {
           return new Response(
@@ -1451,6 +1638,51 @@ export default {
           );
         }
         const key = `public/img_${crypto.randomUUID()}.${extension || "png"}`;
+        if (activeDriver === "neon") {
+          const neonConfig = getRuntimeDatabaseConfig(env).neon;
+          if (!neonConfig.storageBucket) {
+            throw new Error("Nama bucket Neon Object Storage belum diisi.");
+          }
+          await getNeonStorageClient(env).send(
+            new PutObjectCommand({
+              Bucket: neonConfig.storageBucket,
+              Key: key,
+              Body: bytes,
+              ContentType: mimeType,
+            }),
+          );
+          return new Response(
+            JSON.stringify({
+              success: true,
+              message: "Gambar berhasil diunggah ke Neon Object Storage",
+              url: `/api/storage/neon/${encodeURIComponent(key)}`,
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+        if (activeDriver === "supabase") {
+          const supabaseConfig = getRuntimeDatabaseConfig(env).supabase;
+          const bucket =
+            supabaseConfig.storageBucket || "smartinvoice-assets";
+          const { error } = await getSupabase(env).storage
+            .from(bucket)
+            .upload(key, bytes, { contentType: mimeType, upsert: true });
+          if (error) throw error;
+          const { data } = getSupabase(env).storage.from(bucket).getPublicUrl(key);
+          return new Response(
+            JSON.stringify({
+              success: true,
+              message: "Gambar berhasil diunggah ke Supabase Storage",
+              url: data.publicUrl,
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+        if (!env.R2_BUCKET) {
+          throw new Error(
+            "Binding R2_BUCKET belum dikonfigurasi untuk penyimpanan gambar.",
+          );
+        }
         await env.R2_BUCKET.put(key, bytes, {
           httpMetadata: { contentType: mimeType },
         });
@@ -1467,6 +1699,44 @@ export default {
       if (url.pathname === "/api/delete-file" && request.method === "POST") {
         const body: any = await request.json();
         const fileUrl = String(body.fileUrl || "");
+        const neonObject = fileUrl.match(/^\/api\/storage\/neon\/(.+)$/);
+        if (neonObject) {
+          const neonConfig = getRuntimeDatabaseConfig(env).neon;
+          if (!neonConfig.storageBucket) {
+            throw new Error("Nama bucket Neon Object Storage belum diisi.");
+          }
+          const key = decodeURIComponent(neonObject[1]);
+          if (!key.startsWith("public/") || key.includes("..")) {
+            return new Response(
+              JSON.stringify({ success: false, message: "Path file tidak valid." }),
+              { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+            );
+          }
+          await getNeonStorageClient(env).send(
+            new DeleteObjectCommand({ Bucket: neonConfig.storageBucket, Key: key }),
+          );
+          return new Response(
+            JSON.stringify({ success: true, message: "File Neon Object Storage dihapus" }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+        if (fileUrl.includes(".supabase.co/storage/v1/object/")) {
+          const marker = "/storage/v1/object/";
+          const pathIndex = fileUrl.indexOf(marker);
+          const parts = fileUrl.slice(pathIndex + marker.length).split("/");
+          const bucket = decodeURIComponent(parts[1] || "");
+          const key = parts.slice(2).map(decodeURIComponent).join("/");
+          if (bucket && key) {
+            const { error } = await getSupabase(env).storage
+              .from(bucket)
+              .remove([key]);
+            if (error) throw error;
+          }
+          return new Response(
+            JSON.stringify({ success: true, message: "File Supabase Storage dihapus" }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
         if (!fileUrl.startsWith("/uploads/")) {
           return new Response(
             JSON.stringify({ success: true }),
@@ -1491,6 +1761,43 @@ export default {
           JSON.stringify({ success: true, message: "File R2 dihapus" }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
+      }
+
+      if (
+        url.pathname.startsWith("/api/storage/neon/") &&
+        request.method === "GET"
+      ) {
+        const key = decodeURIComponent(
+          url.pathname.slice("/api/storage/neon/".length),
+        );
+        if (!key.startsWith("public/") || key.includes("..")) {
+          return new Response("Not found", { status: 404 });
+        }
+        const neonConfig = getRuntimeDatabaseConfig(env).neon;
+        if (!neonConfig.storageBucket) {
+          throw new Error("Nama bucket Neon Object Storage belum diisi.");
+        }
+        let object;
+        try {
+          object = await getNeonStorageClient(env).send(
+            new GetObjectCommand({ Bucket: neonConfig.storageBucket, Key: key }),
+          );
+        } catch (error: any) {
+          if (["NoSuchKey", "NotFound"].includes(error.name)) {
+            return new Response("Not found", { status: 404 });
+          }
+          throw error;
+        }
+        if (!object.Body) return new Response("Not found", { status: 404 });
+        const headers = new Headers({
+          "Cache-Control": "public, max-age=31536000, immutable",
+          "Content-Type": object.ContentType || "application/octet-stream",
+          "X-Content-Type-Options": "nosniff",
+        });
+        const bytes = await object.Body.transformToByteArray();
+        const body = new ArrayBuffer(bytes.byteLength);
+        new Uint8Array(body).set(bytes);
+        return new Response(body, { headers });
       }
 
       if (url.pathname.startsWith("/uploads/") && request.method === "GET") {

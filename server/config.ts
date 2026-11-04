@@ -6,8 +6,22 @@ export interface DatabaseConfig {
   activeDriver: "sqlite" | "d1" | "supabase" | "neon";
   sqlite: { filePath: string };
   d1: { binding: string };
-  supabase: { url: string; anonKey: string; configured?: boolean };
-  neon: { configured: boolean; connectionString?: string };
+  supabase: {
+    url: string;
+    anonKey: string;
+    configured?: boolean;
+    storageBucket?: string;
+  };
+  neon: {
+    configured: boolean;
+    connectionString?: string;
+    storageEndpoint?: string;
+    storageRegion?: string;
+    storageBucket?: string;
+    storageAccessKeyId?: string;
+    storageSecretAccessKey?: string;
+    storageConfigured?: boolean;
+  };
 }
 
 const DATA_DIR = path.resolve(process.cwd(), "data");
@@ -34,8 +48,20 @@ function defaultConfig(): DatabaseConfig {
     activeDriver: "sqlite",
     sqlite: { filePath: DB_PATH },
     d1: { binding: "" },
-    supabase: { url: "", anonKey: "" },
-    neon: { configured: false },
+    supabase: {
+      url: "",
+      anonKey: "",
+      storageBucket: "smartinvoice-assets",
+    },
+    neon: {
+      configured: false,
+      storageEndpoint: "",
+      storageRegion: "",
+      storageBucket: "smartinvoice-assets",
+      storageAccessKeyId: "",
+      storageSecretAccessKey: "",
+      storageConfigured: false,
+    },
   };
 }
 
@@ -58,6 +84,19 @@ function readStoredConfig(): DatabaseConfig {
         ...raw.neon,
         connectionString:
           raw.neon?.connectionString || process.env.NEON_DATABASE_URL || "",
+        storageEndpoint: raw.neon?.storageEndpoint || "",
+        storageRegion: raw.neon?.storageRegion || "",
+        storageBucket:
+          raw.neon?.storageBucket || defaultConfig().neon.storageBucket,
+        storageAccessKeyId: raw.neon?.storageAccessKeyId || "",
+        storageSecretAccessKey: raw.neon?.storageSecretAccessKey || "",
+        storageConfigured: Boolean(
+          raw.neon?.storageEndpoint &&
+            raw.neon?.storageRegion &&
+            raw.neon?.storageBucket &&
+            raw.neon?.storageAccessKeyId &&
+            raw.neon?.storageSecretAccessKey,
+        ),
       },
     };
     persistConfig(stored);
@@ -91,7 +130,8 @@ export function isDatabaseEnvLocked(): boolean {
     process.env.DATABASE_DRIVER ||
       process.env.SUPABASE_URL ||
       process.env.SUPABASE_ANON_KEY ||
-      process.env.NEON_DATABASE_URL,
+    process.env.SUPABASE_STORAGE_BUCKET ||
+    process.env.NEON_DATABASE_URL,
   );
 }
 
@@ -118,7 +158,9 @@ export function getDatabaseConfig(): DatabaseConfig {
       ? requestedDriver
       : process.env.NEON_DATABASE_URL
         ? "neon"
-        : "supabase";
+        : process.env.SUPABASE_URL || process.env.SUPABASE_ANON_KEY
+          ? "supabase"
+          : stored.activeDriver;
 
   return {
     ...stored,
@@ -127,6 +169,10 @@ export function getDatabaseConfig(): DatabaseConfig {
     supabase: {
       url: process.env.SUPABASE_URL || stored.supabase.url,
       anonKey: process.env.SUPABASE_ANON_KEY || stored.supabase.anonKey,
+      storageBucket:
+        process.env.SUPABASE_STORAGE_BUCKET ||
+        stored.supabase.storageBucket ||
+        "smartinvoice-assets",
     },
     neon: {
       configured: Boolean(
@@ -134,6 +180,12 @@ export function getDatabaseConfig(): DatabaseConfig {
       ),
       connectionString:
         process.env.NEON_DATABASE_URL || stored.neon.connectionString || "",
+      storageEndpoint: stored.neon.storageEndpoint,
+      storageRegion: stored.neon.storageRegion,
+      storageBucket: stored.neon.storageBucket,
+      storageAccessKeyId: stored.neon.storageAccessKeyId,
+      storageSecretAccessKey: stored.neon.storageSecretAccessKey,
+      storageConfigured: stored.neon.storageConfigured,
     },
   };
 }
@@ -147,12 +199,25 @@ export function getPublicDatabaseConfig(
       url: config.supabase.url,
       anonKey: "",
       configured: Boolean(config.supabase.anonKey),
+      storageBucket: config.supabase.storageBucket || "smartinvoice-assets",
     },
     neon: {
       configured: Boolean(
         config.neon.connectionString || process.env.NEON_DATABASE_URL,
       ),
       connectionString: "",
+      storageEndpoint: config.neon.storageEndpoint || "",
+      storageRegion: config.neon.storageRegion || "",
+      storageBucket: config.neon.storageBucket || "smartinvoice-assets",
+      storageAccessKeyId: "",
+      storageSecretAccessKey: "",
+      storageConfigured: Boolean(
+        config.neon.storageEndpoint &&
+          config.neon.storageRegion &&
+          config.neon.storageBucket &&
+          config.neon.storageAccessKeyId &&
+          config.neon.storageSecretAccessKey,
+      ),
     },
   };
 }
@@ -176,12 +241,40 @@ export function saveDatabaseConfig(
       ...current.supabase,
       ...update.supabase,
       anonKey: update.supabase?.anonKey || current.supabase.anonKey,
+      storageBucket:
+        update.supabase?.storageBucket ||
+        current.supabase.storageBucket ||
+        "smartinvoice-assets",
     },
     neon: {
       ...current.neon,
       ...update.neon,
       connectionString:
         update.neon?.connectionString || current.neon.connectionString || "",
+      storageEndpoint:
+        update.neon?.storageEndpoint || current.neon.storageEndpoint || "",
+      storageRegion:
+        update.neon?.storageRegion || current.neon.storageRegion || "",
+      storageBucket:
+        update.neon?.storageBucket || current.neon.storageBucket || "smartinvoice-assets",
+      storageAccessKeyId:
+        update.neon?.storageAccessKeyId ||
+        current.neon.storageAccessKeyId ||
+        "",
+      storageSecretAccessKey:
+        update.neon?.storageSecretAccessKey ||
+        current.neon.storageSecretAccessKey ||
+        "",
+      storageConfigured: Boolean(
+        update.neon?.storageEndpoint || current.neon.storageEndpoint
+      ) &&
+        Boolean(update.neon?.storageRegion || current.neon.storageRegion) &&
+        Boolean(update.neon?.storageBucket || current.neon.storageBucket) &&
+        Boolean(update.neon?.storageAccessKeyId || current.neon.storageAccessKeyId) &&
+        Boolean(
+          update.neon?.storageSecretAccessKey ||
+            current.neon.storageSecretAccessKey,
+        ),
     },
   };
 
@@ -197,6 +290,16 @@ export function saveDatabaseConfig(
   }
   if (next.activeDriver === "neon" && !next.neon.connectionString) {
     throw new Error("Connection string Neon wajib diisi.");
+  }
+  if (
+    next.activeDriver === "neon" &&
+    (!next.neon.storageEndpoint ||
+      !next.neon.storageRegion ||
+      !next.neon.storageBucket ||
+      !next.neon.storageAccessKeyId ||
+      !next.neon.storageSecretAccessKey)
+  ) {
+    throw new Error("Konfigurasi Neon Object Storage wajib diisi.");
   }
   if (
     next.activeDriver === "supabase" &&

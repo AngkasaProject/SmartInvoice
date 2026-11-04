@@ -179,6 +179,7 @@ export interface SupabaseCredentials {
   url: string;
   anonKey: string;
   configured?: boolean;
+  storageBucket?: string;
 }
 
 export interface DatabaseConfig {
@@ -193,5 +194,11 @@ export interface DatabaseConfig {
   neon: {
     configured: boolean;
     connectionString?: string;
+    storageEndpoint?: string;
+    storageRegion?: string;
+    storageBucket?: string;
+    storageAccessKeyId?: string;
+    storageSecretAccessKey?: string;
+    storageConfigured?: boolean;
   };
 }

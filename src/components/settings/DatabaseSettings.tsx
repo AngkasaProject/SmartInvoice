@@ -7,6 +7,7 @@ import {
   migrateDatabase,
   saveDatabaseConfig,
   testDatabaseConnection,
+  testObjectStorageConnection,
 } from "../../services/dbAdapter";
 import {
   Database,
@@ -42,6 +43,7 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
   const [showSupabaseKey, setShowSupabaseKey] = useState(false);
   const [showNeonConnectionString, setShowNeonConnectionString] =
     useState(false);
+  const [showNeonStorageSecret, setShowNeonStorageSecret] = useState(false);
 
   // Test states
   const [sqliteTestStatus, setSqliteTestStatus] = useState<
@@ -60,6 +62,10 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
     "idle" | "loading" | "success" | "error"
   >("idle");
   const [supabaseTestMsg, setSupabaseTestMsg] = useState("");
+  const [objectStorageTestStatus, setObjectStorageTestStatus] = useState<
+    "idle" | "loading" | "success" | "error"
+  >("idle");
+  const [objectStorageTestMsg, setObjectStorageTestMsg] = useState("");
 
   // Migration states
   const [migrateFrom, setMigrateFrom] = useState<DatabaseDriver>("sqlite");
@@ -82,10 +88,17 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
       return toast.error("Konfigurasi dikunci oleh Environment Variable.");
     if (
       dbSettings.activeDriver === "neon" &&
-      !dbSettings.neon.connectionString &&
-      !dbSettings.neon.configured
+      ((!dbSettings.neon.connectionString && !dbSettings.neon.configured) ||
+        (!dbSettings.neon.storageConfigured &&
+          (!dbSettings.neon.storageEndpoint ||
+            !dbSettings.neon.storageRegion ||
+            !dbSettings.neon.storageBucket ||
+            !dbSettings.neon.storageAccessKeyId ||
+            !dbSettings.neon.storageSecretAccessKey)))
     ) {
-      return toast.error("Masukkan connection string Neon sebelum menyimpan.");
+      return toast.error(
+        "Connection string dan kredensial Neon Object Storage wajib dikonfigurasi.",
+      );
     }
     if (
       dbSettings.activeDriver === "supabase" &&
@@ -97,8 +110,9 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
 
     const res = await saveDatabaseConfig(dbSettings);
     if (res.success) {
+      setDbSettings(res.config);
       toast.success(
-        `Pengaturan database disimpan! Mode aktif: ${dbSettings.activeDriver}`,
+        `Pengaturan database disimpan! Mode aktif: ${res.config.activeDriver}`,
       );
       if (onRefreshData) onRefreshData();
     } else {
@@ -141,6 +155,31 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
     const res = await testDatabaseConnection("supabase", dbSettings.supabase);
     setSupabaseTestStatus(res.success ? "success" : "error");
     setSupabaseTestMsg(res.message);
+    res.success ? toast.success(res.message) : toast.error(res.message);
+  };
+
+  const handleTestObjectStorage = async () => {
+    const provider = dbSettings.activeDriver;
+    if (provider !== "neon" && provider !== "supabase") return;
+    setObjectStorageTestStatus("loading");
+    setObjectStorageTestMsg("");
+    const credentials: Record<string, string> =
+      provider === "neon"
+        ? {
+            endpoint: dbSettings.neon.storageEndpoint || "",
+            region: dbSettings.neon.storageRegion || "",
+            bucket: dbSettings.neon.storageBucket || "",
+            accessKeyId: dbSettings.neon.storageAccessKeyId || "",
+            secretAccessKey: dbSettings.neon.storageSecretAccessKey || "",
+          }
+        : {
+            url: dbSettings.supabase.url,
+            anonKey: dbSettings.supabase.anonKey,
+            bucket: dbSettings.supabase.storageBucket || "",
+          };
+    const res = await testObjectStorageConnection(provider, credentials);
+    setObjectStorageTestStatus(res.success ? "success" : "error");
+    setObjectStorageTestMsg(res.message);
     res.success ? toast.success(res.message) : toast.error(res.message);
   };
 
@@ -369,21 +408,59 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
                 </button>
               </div>
             </div>
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                Supabase Storage bucket
+              </label>
+              <input
+                type="text"
+                value={dbSettings.supabase.storageBucket || ""}
+                onChange={(e) =>
+                  setDbSettings({
+                    ...dbSettings,
+                    supabase: {
+                      ...dbSettings.supabase,
+                      storageBucket: e.target.value,
+                    },
+                  })
+                }
+                className="w-full text-xs font-mono p-2.5 rounded-lg border border-slate-200"
+              />
+            </div>
           </div>
+          <p className="text-[11px] text-slate-500">
+            Upload gambar memakai Supabase Storage dengan URL dan Anon Key di
+            atas. Bucket harus sudah dibuat dan kebijakannya mengizinkan upload
+            serta baca publik.
+          </p>
           <div className="flex gap-3">
             <button
               type="button"
-              onClick={handleTestSupabase}
+              onClick={handleTestObjectStorage}
               className="px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-900 text-white flex items-center gap-2"
             >
-              {supabaseTestStatus === "loading" ? (
+              {objectStorageTestStatus === "loading" ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
                 <RefreshCw className="w-3.5 h-3.5 text-blue-400" />
               )}{" "}
-              Tes Supabase
+              Tes Supabase Storage
+            </button>
+            <button
+              type="button"
+              onClick={handleTestSupabase}
+              className="px-3.5 py-2 rounded-xl text-xs font-bold border border-slate-300 text-slate-700 flex items-center gap-2"
+            >
+              Tes koneksi database
             </button>
           </div>
+          {objectStorageTestMsg && (
+            <div
+              className={`p-3 rounded-xl text-xs ${objectStorageTestStatus === "success" ? "bg-emerald-100 text-emerald-900" : "bg-rose-50 text-rose-900"}`}
+            >
+              {objectStorageTestMsg}
+            </div>
+          )}
           {supabaseTestMsg && (
             <div
               className={`p-3 rounded-xl text-xs ${supabaseTestStatus === "success" ? "bg-emerald-100 text-emerald-900" : "bg-rose-50 text-rose-900"}`}
@@ -468,6 +545,156 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
                 <Eye className="w-4 h-4" />
               )}
             </button>
+          </div>
+          <div className="border-t border-emerald-200 pt-3 space-y-3">
+            <h3 className="text-xs font-bold text-emerald-950">
+              Neon Object Storage
+            </h3>
+            <p className="text-[11px] text-emerald-900">
+              Buat bucket di Neon Console, lalu masukkan endpoint branch, region,
+              nama bucket, Access Key ID, dan Secret Access Key dengan scope
+              <code> storage:read </code> serta <code>storage:write</code>.
+              Kredensial storage disimpan di database default dan tidak
+              ditampilkan lagi setelah tersimpan.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="text-[11px] font-semibold text-slate-700">
+                S3 endpoint
+                <input
+                  type="url"
+                  value={dbSettings.neon.storageEndpoint || ""}
+                  placeholder="https://br-....storage.c-....aws.neon.tech"
+                  onChange={(e) =>
+                    setDbSettings({
+                      ...dbSettings,
+                      neon: {
+                        ...dbSettings.neon,
+                        storageEndpoint: e.target.value,
+                      },
+                    })
+                  }
+                  className="mt-1 w-full text-xs font-mono p-2.5 rounded-lg border border-slate-200"
+                />
+              </label>
+              <label className="text-[11px] font-semibold text-slate-700">
+                Region
+                <input
+                  type="text"
+                  value={dbSettings.neon.storageRegion || ""}
+                  placeholder="us-east-2"
+                  onChange={(e) =>
+                    setDbSettings({
+                      ...dbSettings,
+                      neon: {
+                        ...dbSettings.neon,
+                        storageRegion: e.target.value,
+                      },
+                    })
+                  }
+                  className="mt-1 w-full text-xs font-mono p-2.5 rounded-lg border border-slate-200"
+                />
+              </label>
+              <label className="text-[11px] font-semibold text-slate-700">
+                Bucket
+                <input
+                  type="text"
+                  value={dbSettings.neon.storageBucket || ""}
+                  onChange={(e) =>
+                    setDbSettings({
+                      ...dbSettings,
+                      neon: {
+                        ...dbSettings.neon,
+                        storageBucket: e.target.value,
+                      },
+                    })
+                  }
+                  className="mt-1 w-full text-xs font-mono p-2.5 rounded-lg border border-slate-200"
+                />
+              </label>
+              <label className="text-[11px] font-semibold text-slate-700">
+                Access Key ID
+                <input
+                  type="text"
+                  value={dbSettings.neon.storageAccessKeyId || ""}
+                  placeholder={
+                    dbSettings.neon.storageConfigured
+                      ? "Sudah tersimpan"
+                      : "nak_live_..."
+                  }
+                  onChange={(e) =>
+                    setDbSettings({
+                      ...dbSettings,
+                      neon: {
+                        ...dbSettings.neon,
+                        storageAccessKeyId: e.target.value,
+                      },
+                    })
+                  }
+                  className="mt-1 w-full text-xs font-mono p-2.5 rounded-lg border border-slate-200"
+                />
+              </label>
+              <label className="text-[11px] font-semibold text-slate-700 sm:col-span-2">
+                Secret Access Key
+                <span className="relative block">
+                  <input
+                    type={showNeonStorageSecret ? "text" : "password"}
+                    value={dbSettings.neon.storageSecretAccessKey || ""}
+                    placeholder={
+                      dbSettings.neon.storageConfigured
+                        ? "Sudah tersimpan; kosongkan untuk mempertahankan"
+                        : "nsk_live_..."
+                    }
+                    onChange={(e) =>
+                      setDbSettings({
+                        ...dbSettings,
+                        neon: {
+                          ...dbSettings.neon,
+                          storageSecretAccessKey: e.target.value,
+                        },
+                      })
+                    }
+                    className="mt-1 w-full text-xs font-mono p-2.5 pr-9 rounded-lg border border-slate-200"
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setShowNeonStorageSecret(!showNeonStorageSecret)
+                    }
+                    className="absolute right-2.5 top-3 text-slate-400"
+                  >
+                    {showNeonStorageSecret ? (
+                      <EyeOff className="w-4 h-4" />
+                    ) : (
+                      <Eye className="w-4 h-4" />
+                    )}
+                  </button>
+                </span>
+              </label>
+            </div>
+            <p className="text-[11px] text-emerald-900">
+              Status: {dbSettings.neon.storageConfigured ? "Neon Object Storage tersimpan" : "belum dikonfigurasi"}.
+              File diakses melalui aplikasi, jadi bucket dapat tetap private.
+            </p>
+            <button
+              type="button"
+              onClick={handleTestObjectStorage}
+              disabled={objectStorageTestStatus === "loading"}
+              className="px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-900 text-white flex items-center gap-2 disabled:opacity-50"
+            >
+              {objectStorageTestStatus === "loading" ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="w-3.5 h-3.5 text-emerald-400" />
+              )}
+              Tes Neon Object Storage
+            </button>
+            {objectStorageTestMsg && (
+              <div
+                className={`p-3 rounded-xl text-xs ${objectStorageTestStatus === "success" ? "bg-emerald-100 text-emerald-900" : "bg-rose-50 text-rose-900"}`}
+              >
+                {objectStorageTestMsg}
+              </div>
+            )}
           </div>
           <button
             type="button"

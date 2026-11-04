@@ -3,7 +3,6 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
-import { createClient } from "@supabase/supabase-js";
 import {
   testConnection,
   migrateDataBetweenDrivers,
@@ -28,7 +27,12 @@ import {
   saveDatabaseConfig,
   getWhatsAppEnvConfig,
 } from "./server/config.ts";
-import { uploadImage } from "./server/storage.ts";
+import {
+  deleteStoredFile,
+  getStoredImage,
+  testStorageConnection,
+  uploadImage,
+} from "./server/storage.ts";
 import { hashPassword, verifyPassword } from "./src/utils/password.ts";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -188,45 +192,42 @@ async function startServer() {
     }
   });
 
+  app.get(/^\/api\/storage\/neon\/(.+)$/, async (req, res) => {
+    try {
+      const key = decodeURIComponent(req.params[0]);
+      if (!key.startsWith("public/") || key.includes("..")) {
+        return res.status(400).json({ success: false, message: "Path file tidak valid." });
+      }
+      const object = await getStoredImage("neon", key);
+      if (!object) return res.status(404).end();
+      res.setHeader("Content-Type", object.contentType);
+      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.send(Buffer.from(object.body));
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
   app.post("/api/delete-file", async (req, res) => {
     try {
       const { fileUrl } = req.body;
       if (!fileUrl) return res.json({ success: true });
+      await deleteStoredFile(fileUrl);
+      return res.json({ success: true, message: "File dihapus" });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
 
-      if (fileUrl.startsWith("/uploads/")) {
-        const filename = fileUrl.replace("/uploads/", "");
-        const filePath = path.join(UPLOADS_DIR, filename);
-        if (fs.existsSync(filePath)) {
-          fs.unlinkSync(filePath);
-          return res.json({ success: true, message: "File lokal dihapus" });
-        }
-      }
-
-      if (fileUrl.includes("supabase.co")) {
-        const config = getDatabaseConfig();
-        if (config.supabase.url && config.supabase.anonKey) {
-          const supabase = createClient(
-            config.supabase.url,
-            config.supabase.anonKey,
-          );
-          const match = fileUrl.match(/\/([^/]+\/[^/]+)$/);
-          const filePathInBucket = match ? match[1] : "";
-
-          if (filePathInBucket) {
-            const bucketName =
-              process.env.SUPABASE_STORAGE_BUCKET || "smartinvoice-assets";
-            const { error } = await supabase.storage
-              .from(bucketName)
-              .remove([filePathInBucket]);
-            if (error) throw error;
-            return res.json({
-              success: true,
-              message: "File Supabase dihapus",
-            });
-          }
-        }
-      }
-      return res.json({ success: true });
+  app.post("/api/storage/test", async (req, res) => {
+    try {
+      if (!(await requireDatabaseSettingsSession(req, res))) return;
+      const result = await testStorageConnection(
+        req.body.provider,
+        req.body.credentials,
+      );
+      return res.status(result.success ? 200 : 400).json(result);
     } catch (err: any) {
       return res.status(500).json({ success: false, message: err.message });
     }

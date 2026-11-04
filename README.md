@@ -33,9 +33,9 @@ Didesain agar bisa berjalan di **Docker (Self-Hosted)** maupun **Cloudflare Work
 - **Dual WhatsApp Gateway**:
   - **OpenWA (Self-Hosted)**: Kompatibel dengan API OpenWA REST (UUID session, API key, pengiriman PDF base64).
   - **Fonnte (Cloud)**: Cukup masukkan Device Token Fonnte.
-- **Penyimpanan Gambar**: Logo dan QRIS disimpan di R2 (Workers), Supabase Storage, atau Local Disk (Docker).
+- **Penyimpanan Gambar**: Storage mengikuti database aktif: R2 untuk D1, Neon Object Storage untuk Neon, Supabase Storage untuk Supabase, dan disk lokal untuk SQLite.
 - **Pilihan Database per Runtime**: Docker memakai SQLite secara default; Cloudflare Workers memakai D1; Supabase dan Neon tersedia sebagai database pihak ketiga.
-- **Penyimpanan Gambar Cloud**: Workers menggunakan Cloudflare R2 untuk logo dan QRIS; Docker dapat menyimpan file di disk lokal.
+- **Penyimpanan Gambar Cloud**: Kredensial storage Neon dan Supabase dapat diatur dari panel; Workers tetap menggunakan binding R2 saat D1 aktif.
 - **Hybrid & Fallback Storage**: Konfigurasi sensitif bisa dikunci via Environment Variables (`.env`). Jika server tidak tersedia, aplikasi dapat memakai `localStorage` browser.
 - **Integrasi API Toko Online**: Endpoint Webhook untuk menerima pesanan dari WooCommerce, Shopify, atau custom store.
 
@@ -184,7 +184,7 @@ docker compose up -d --build
 
 ### Setup Neon PostgreSQL
 
-Neon dapat digunakan dari Docker maupun Workers. Jalankan SQL dari [`migrations/neon/0001_init.sql`](./migrations/neon/0001_init.sql) di SQL Editor Neon sebelum memilih Neon di Pengaturan → Database. Jika `DATABASE_DRIVER` atau secret provider diatur lewat environment, pilihan driver akan dikunci oleh environment.
+Neon dapat digunakan dari Docker maupun Workers. Jalankan SQL dari [`migrations/neon/0001_init.sql`](./migrations/neon/0001_init.sql) di SQL Editor Neon sebelum memilih Neon di Pengaturan → Database. Jika `DATABASE_DRIVER`, kredensial provider, atau `SUPABASE_STORAGE_BUCKET` diatur lewat environment, pengaturan database akan dikunci oleh environment.
 
 ### ☁️ Deployment via Cloudflare Workers (Cloud)
 
@@ -215,7 +215,7 @@ npx wrangler r2 bucket create smartinvoice-assets
 
 Perintah D1 menampilkan `database_id`. Buka `wrangler.toml` dan ganti nilai contoh `REPLACE_WITH_D1_DATABASE_ID` dengan ID tersebut. Pastikan nama bucket R2 sama dengan `smartinvoice-assets` di konfigurasi. Jika resource sudah ada, gunakan database ID dan nama bucket yang sudah ada, jangan membuat duplikat.
 
-Konfigurasi `[assets]`, binding D1 `DB`, binding R2 `R2_BUCKET`, dan direktori migration sudah tersedia di `wrangler.toml`. D1 dan R2 tetap dipakai jika nanti Anda memilih Neon atau Supabase sebagai database.
+Konfigurasi `[assets]`, binding D1 `DB`, binding R2 `R2_BUCKET`, dan direktori migration sudah tersedia di `wrangler.toml`. D1 tetap menjadi registry konfigurasi dan penyimpan akun admin saat database aplikasi dialihkan. R2 hanya dipakai untuk gambar ketika D1 aktif; Neon dan Supabase memakai object storage masing-masing.
 
 #### 3. Terapkan skema D1
 
@@ -239,7 +239,7 @@ Wrangler akan menampilkan URL Worker, biasanya `https://smart-invoice.<subdomain
 
 #### 5. Secrets dan konfigurasi opsional
 
-D1 adalah default dan tetap menyimpan konfigurasi provider serta akun admin meskipun data aplikasi dialihkan ke Neon/Supabase. Agar driver dapat diganti melalui Pengaturan, jangan atur `DATABASE_DRIVER`, `NEON_DATABASE_URL`, `SUPABASE_URL`, atau `SUPABASE_ANON_KEY`. Masukkan connection string/key provider di UI setelah deployment. Kredensial disimpan di D1 dan tidak dikirim kembali saat konfigurasi dibaca.
+D1 adalah default dan tetap menyimpan konfigurasi provider serta akun admin meskipun data aplikasi dialihkan ke Neon/Supabase. Agar driver dapat diganti melalui Pengaturan, jangan atur `DATABASE_DRIVER`, `NEON_DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, atau `SUPABASE_STORAGE_BUCKET`. Masukkan connection string/key provider di UI setelah deployment. Kredensial disimpan di D1 dan tidak dikirim kembali saat konfigurasi dibaca.
 
 Secret berikut opsional untuk integrasi WhatsApp:
 
@@ -271,7 +271,17 @@ npx wrangler secret put SUPABASE_URL
 npx wrangler secret put SUPABASE_ANON_KEY
 ```
 
-Jika driver dipilih lewat UI, D1 tetap menjadi registry konfigurasi dan penyimpan akun admin. Jalankan skema Neon di atas atau siapkan skema Supabase sebelum memilih provider. R2 tetap diperlukan untuk upload gambar pada semua pilihan database di Workers.
+Jika driver dipilih lewat UI, D1 tetap menjadi registry konfigurasi dan penyimpan akun admin. Jalankan skema Neon di atas atau siapkan skema Supabase sebelum memilih provider.
+
+##### Object Storage dari panel
+
+Storage mengikuti database aplikasi yang aktif, dan konfigurasi disimpan di registry default (D1 pada Workers, SQLite pada Docker/Bun). Tidak perlu mengatur secret Environment Variable untuk berpindah provider dari Pengaturan → Database.
+
+- **Neon**: Buat bucket dan S3 access key di Neon Console pada branch yang dipakai. Masukkan connection string Neon serta endpoint S3, region, bucket, Access Key ID, dan Secret Access Key di panel. Access key perlu izin `storage:read` dan `storage:write`; bucket dapat tetap private karena file disajikan melalui aplikasi. Lihat [panduan Neon Object Storage](https://neon.com/docs/storage/get-started) dan [S3 compatibility](https://neon.com/docs/storage/s3-compatibility).
+- **Supabase**: Buat bucket di Storage, lalu isi Project URL, Anon Key, dan nama bucket di panel. Bucket dan kebijakannya harus mengizinkan operasi upload dan baca publik untuk file aplikasi.
+- **D1 / SQLite**: D1 menggunakan binding R2 `R2_BUCKET`; SQLite menyimpan file secara lokal. Jika D1 tidak dipakai, R2 tidak digunakan untuk upload gambar.
+
+Pilih provider, isi pengaturan storage-nya, gunakan tombol tes koneksi, lalu simpan pengaturan database. Neon/Supabase mensyaratkan tabel/schema aplikasi sudah disiapkan lebih dahulu.
 
 Sesudah mengubah binding, variable, atau secret, jalankan ulang `npx wrangler deploy`. `.env` dan `.env.example` dipakai untuk server Docker/Bun; Workers membaca binding dari `wrangler.toml` dan variable/secret dari konfigurasi Cloudflare. Endpoint pengaturan database hanya dapat diakses dengan sesi admin yang valid.
 

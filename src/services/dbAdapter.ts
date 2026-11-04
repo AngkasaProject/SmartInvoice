@@ -22,8 +22,18 @@ export const defaultDatabaseConfig: DatabaseConfig = {
     url: (import.meta as any).env?.VITE_SUPABASE_URL || "",
     anonKey: (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || "",
     configured: false,
+    storageBucket: "smartinvoice-assets",
   },
-  neon: { configured: false, connectionString: "" },
+  neon: {
+    configured: false,
+    connectionString: "",
+    storageEndpoint: "",
+    storageRegion: "",
+    storageBucket: "smartinvoice-assets",
+    storageAccessKeyId: "",
+    storageSecretAccessKey: "",
+    storageConfigured: false,
+  },
 };
 
 // Interface untuk respons konfigurasi (menambahkan isEnvLocked)
@@ -163,6 +173,25 @@ export async function testDatabaseConnection(
     });
     const data = await res.json();
     return data;
+  } catch (err: any) {
+    return {
+      success: false,
+      message: `Tidak dapat menghubungi server: ${err.message}`,
+    };
+  }
+}
+
+export async function testObjectStorageConnection(
+  provider: "neon" | "supabase",
+  credentials: Record<string, string>,
+): Promise<{ success: boolean; message: string; latencyMs?: number }> {
+  try {
+    const res = await fetch("/api/storage/test", {
+      method: "POST",
+      headers: databaseAuthHeaders(true),
+      body: JSON.stringify({ provider, credentials }),
+    });
+    return await res.json();
   } catch (err: any) {
     return {
       success: false,
