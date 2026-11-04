@@ -178,6 +178,7 @@ export type DatabaseDriver = "sqlite" | "d1" | "supabase" | "neon";
 export interface SupabaseCredentials {
   url: string;
   anonKey: string;
+  configured?: boolean;
 }
 
 export interface DatabaseConfig {
@@ -191,5 +192,6 @@ export interface DatabaseConfig {
   supabase: SupabaseCredentials;
   neon: {
     configured: boolean;
+    connectionString?: string;
   };
 }

@@ -38,7 +38,10 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
   );
   const [isEnvLocked, setIsEnvLocked] = useState(false);
   const [canMigrate, setCanMigrate] = useState(false);
+  const [isWorkersRuntime, setIsWorkersRuntime] = useState(false);
   const [showSupabaseKey, setShowSupabaseKey] = useState(false);
+  const [showNeonConnectionString, setShowNeonConnectionString] =
+    useState(false);
 
   // Test states
   const [sqliteTestStatus, setSqliteTestStatus] = useState<
@@ -69,6 +72,7 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
       setDbSettings(res.config);
       setIsEnvLocked(res.isEnvLocked);
       setCanMigrate(res.canMigrate);
+      setIsWorkersRuntime(Boolean(res.isWorkersRuntime));
     });
   }, []);
 
@@ -78,9 +82,17 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
       return toast.error("Konfigurasi dikunci oleh Environment Variable.");
     if (
       dbSettings.activeDriver === "neon" &&
+      !dbSettings.neon.connectionString &&
       !dbSettings.neon.configured
     ) {
-      return toast.error("Atur NEON_DATABASE_URL sebelum memilih Neon.");
+      return toast.error("Masukkan connection string Neon sebelum menyimpan.");
+    }
+    if (
+      dbSettings.activeDriver === "supabase" &&
+      (!dbSettings.supabase.url ||
+        (!dbSettings.supabase.anonKey && !dbSettings.supabase.configured))
+    ) {
+      return toast.error("URL dan Anon Key Supabase wajib dikonfigurasi.");
     }
 
     const res = await saveDatabaseConfig(dbSettings);
@@ -115,7 +127,9 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
   const handleTestNeon = async () => {
     setNeonTestStatus("loading");
     setNeonTestMsg("");
-    const res = await testDatabaseConnection("neon");
+    const res = await testDatabaseConnection("neon", {
+      connectionString: dbSettings.neon.connectionString,
+    });
     setNeonTestStatus(res.success ? "success" : "error");
     setNeonTestMsg(res.message);
     res.success ? toast.success(res.message) : toast.error(res.message);
@@ -169,7 +183,8 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
             <Database className="w-4 h-4 text-indigo-600" /> Database Server
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Pilihan real working database server.
+            SQLite/D1 tetap menyimpan konfigurasi dan akun admin. Data aplikasi
+            memakai database yang dipilih; pergantian driver tidak menyalin data.
           </p>
         </div>
         {!isEnvLocked && (
@@ -189,9 +204,11 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
         <div
           onClick={() =>
             !isEnvLocked &&
-            setDbSettings({ ...dbSettings, activeDriver: "sqlite" })
+            (isWorkersRuntime
+              ? toast.info("SQLite hanya tersedia di server Bun/Docker.")
+              : setDbSettings({ ...dbSettings, activeDriver: "sqlite" }))
           }
-          className={`cursor-pointer p-4 rounded-xl border-2 transition ${dbSettings.activeDriver === "sqlite" ? "border-emerald-600 bg-emerald-50/40" : "border-slate-200 bg-white"}`}
+          className={`${isWorkersRuntime ? "cursor-not-allowed opacity-60" : "cursor-pointer"} p-4 rounded-xl border-2 transition ${dbSettings.activeDriver === "sqlite" ? "border-emerald-600 bg-emerald-50/40" : "border-slate-200 bg-white"}`}
         >
           <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
             <HardDrive className="w-4 h-4" /> SQLite
@@ -204,9 +221,11 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
         <div
           onClick={() =>
             !isEnvLocked &&
-            toast.info("D1 hanya tersedia di Cloudflare Workers melalui binding Wrangler.")
+            (isWorkersRuntime
+              ? setDbSettings({ ...dbSettings, activeDriver: "d1" })
+              : toast.info("D1 hanya tersedia di Cloudflare Workers melalui binding Wrangler."))
           }
-          className={`cursor-pointer p-4 rounded-xl border-2 transition ${dbSettings.activeDriver === "d1" ? "border-orange-600 bg-orange-50/40" : "border-slate-200 bg-white"}`}
+          className={`${isWorkersRuntime ? "cursor-pointer" : "cursor-not-allowed opacity-60"} p-4 rounded-xl border-2 transition ${dbSettings.activeDriver === "d1" ? "border-orange-600 bg-orange-50/40" : "border-slate-200 bg-white"}`}
         >
           <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
             <Cloud className="w-4 h-4" /> Cloudflare D1
@@ -303,6 +322,7 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
               <input
                 type="text"
                 value={dbSettings.supabase.url}
+                placeholder="https://project.supabase.co"
                 onChange={(e) =>
                   setDbSettings({
                     ...dbSettings,
@@ -320,6 +340,11 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
                 <input
                   type={showSupabaseKey ? "text" : "password"}
                   value={dbSettings.supabase.anonKey}
+                  placeholder={
+                    dbSettings.supabase.configured
+                      ? "Sudah tersimpan; kosongkan untuk mempertahankan"
+                      : "Masukkan Supabase Anon Key"
+                  }
                   onChange={(e) =>
                     setDbSettings({
                       ...dbSettings,
@@ -401,13 +426,49 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
       {dbSettings.activeDriver === "neon" && (
         <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200 space-y-3">
           <p className="text-xs text-emerald-950">
-            Simpan connection string Neon sebagai secret <code>NEON_DATABASE_URL</code>{" "}
-            di environment server/Workers. Secret tidak disimpan atau dikirim
-            melalui UI.
+            Connection string disimpan di database default (SQLite/D1) dan
+            tidak pernah ditampilkan kembali setelah tersimpan.
           </p>
           <p className="text-xs text-emerald-800">
-            Status: {dbSettings.neon.configured ? "connection string terdeteksi" : "belum terdeteksi"}
+            Status: {dbSettings.neon.configured ? "connection string tersimpan" : "belum dikonfigurasi"}
           </p>
+          <div className="relative">
+            <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+              Connection string Neon
+            </label>
+            <input
+              type={showNeonConnectionString ? "text" : "password"}
+              value={dbSettings.neon.connectionString || ""}
+              placeholder={
+                dbSettings.neon.configured
+                  ? "Sudah tersimpan; kosongkan untuk mempertahankan"
+                  : "postgresql://..."
+              }
+              onChange={(e) =>
+                setDbSettings({
+                  ...dbSettings,
+                  neon: {
+                    ...dbSettings.neon,
+                    connectionString: e.target.value,
+                  },
+                })
+              }
+              className="w-full text-xs font-mono p-2.5 pr-9 rounded-lg border border-slate-200"
+            />
+            <button
+              type="button"
+              onClick={() =>
+                setShowNeonConnectionString(!showNeonConnectionString)
+              }
+              className="absolute right-2.5 bottom-2.5 text-slate-400"
+            >
+              {showNeonConnectionString ? (
+                <EyeOff className="w-4 h-4" />
+              ) : (
+                <Eye className="w-4 h-4" />
+              )}
+            </button>
+          </div>
           <button
             type="button"
             onClick={handleTestNeon}

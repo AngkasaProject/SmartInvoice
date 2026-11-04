@@ -17,7 +17,13 @@ import { DatabaseConfig, getDatabaseConfig } from "./config";
 const DATA_DIR = path.resolve(process.cwd(), "data");
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const DB_PATH = path.join(DATA_DIR, "smartinvoice.db");
+const DB_PATH = path.resolve(
+  process.cwd(),
+  process.env.SQLITE_PATH || "./data/smartinvoice.db",
+);
+if (!fs.existsSync(path.dirname(DB_PATH))) {
+  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+}
 const db = new Database(DB_PATH, { create: true });
 
 // Optimasi standar: WAL untuk konkurensi baca/tulis, FK aktif
@@ -88,14 +94,26 @@ db.run(`
   )
 `);
 
+db.run(`
+  CREATE TABLE IF NOT EXISTS auth_sessions (
+    token_hash TEXT PRIMARY KEY,
+    expires_at TEXT NOT NULL
+  )
+`);
+db.run(`
+  CREATE TABLE IF NOT EXISTS app_config (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )
+`);
+
 // ══════════════════════════════════════════════════════════════════════
 // Supabase client (lazy-initialized, hanya dipakai bila ENV aktif)
 // ══════════════════════════════════════════════════════════════════════
-let _supabaseClient: SupabaseClient | null = null;
+const supabaseClients = new Map<string, SupabaseClient>();
 
 function getSupabase(): SupabaseClient {
-  if (_supabaseClient) return _supabaseClient;
-
   const cfg = getDatabaseConfig();
   const url = cfg.supabase?.url;
   const key = cfg.supabase?.anonKey;
@@ -106,9 +124,14 @@ function getSupabase(): SupabaseClient {
     );
   }
 
-  _supabaseClient = createClient(url, key);
+  const cacheKey = `${url}:${key}`;
+  const cached = supabaseClients.get(cacheKey);
+  if (cached) return cached;
+
+  const client = createClient(url, key);
+  supabaseClients.set(cacheKey, client);
   console.log(`[db] Supabase client created for ${url}`);
-  return _supabaseClient;
+  return client;
 }
 
 function isSupabaseActive(): boolean {
@@ -123,23 +146,24 @@ function isSupabaseActive(): boolean {
 function isNeonActive(): boolean {
   return (
     getDatabaseConfig().activeDriver === "neon" &&
-    Boolean(process.env.NEON_DATABASE_URL)
+    Boolean(getDatabaseConfig().neon.connectionString)
   );
 }
 
 function assertSqliteActive(
   driver: DatabaseConfig["activeDriver"] = getDatabaseConfig().activeDriver,
 ): void {
+  const config = getDatabaseConfig();
   if (driver === "sqlite") return;
   if (driver === "d1") {
     throw new Error("Cloudflare D1 hanya tersedia pada runtime Workers.");
   }
-  if (driver === "neon" && !process.env.NEON_DATABASE_URL) {
-    throw new Error("NEON_DATABASE_URL belum dikonfigurasi.");
+  if (driver === "neon" && !config.neon.connectionString) {
+    throw new Error("Connection string Neon belum dikonfigurasi.");
   }
   if (
     driver === "supabase" &&
-    (!getDatabaseConfig().supabase.url || !getDatabaseConfig().supabase.anonKey)
+    (!config.supabase.url || !config.supabase.anonKey)
   ) {
     throw new Error("URL dan Anon Key Supabase wajib dikonfigurasi.");
   }
@@ -147,9 +171,9 @@ function assertSqliteActive(
 }
 
 function getNeon() {
-  const connectionString = process.env.NEON_DATABASE_URL;
+  const connectionString = getDatabaseConfig().neon.connectionString;
   if (!connectionString) {
-    throw new Error("NEON_DATABASE_URL belum dikonfigurasi.");
+    throw new Error("Connection string Neon belum dikonfigurasi.");
   }
   return neon(connectionString);
 }
@@ -566,46 +590,25 @@ export async function saveSetting(
 // ══════════════════════════════════════════════════════════════════════
 
 export async function checkAdminExists(): Promise<boolean> {
-  if (isSupabaseActive()) {
-    const { count } = await getSupabase()
-      .from("users")
-      .select("*", { count: "exact", head: true });
-    return (count || 0) > 0;
-  }
-  if (isNeonActive()) {
-    const rows = await getNeon().query(
-      "SELECT COUNT(*)::int AS c FROM users",
-    );
-    return Number(rows[0]?.c || 0) > 0;
-  }
-  assertSqliteActive();
   const row = db.query("SELECT COUNT(*) as c FROM users").get() as {
     c: number;
   };
-  return (row?.c || 0) > 0;
+  if ((row?.c || 0) > 0) return true;
+  if (isSupabaseActive()) {
+    const { count, error } = await getSupabase()
+      .from("users")
+      .select("*", { count: "exact", head: true });
+    if (error) throw error;
+    return (count || 0) > 0;
+  }
+  if (isNeonActive()) {
+    const rows = await getNeon().query("SELECT COUNT(*)::int AS c FROM users");
+    return Number(rows[0]?.c || 0) > 0;
+  }
+  return false;
 }
 
 export async function createAdminUser(user: any): Promise<void> {
-  if (isSupabaseActive()) {
-    const { error } = await getSupabase().from("users").insert(user);
-    if (error) throw error;
-    return;
-  }
-  if (isNeonActive()) {
-    await getNeon().query(
-      `INSERT INTO users (id, username, password_hash, role, created_at)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [
-        user.id,
-        user.username,
-        user.password_hash,
-        user.role ?? "admin",
-        user.created_at ?? new Date().toISOString(),
-      ],
-    );
-    return;
-  }
-  assertSqliteActive();
   db.run(
     `INSERT INTO users (id, username, password_hash, role, created_at)
      VALUES (?, ?, ?, ?, ?)`,
@@ -620,12 +623,17 @@ export async function createAdminUser(user: any): Promise<void> {
 }
 
 export async function getAdminUser(username: string): Promise<any> {
+  const defaultUser = (
+    db.query("SELECT * FROM users WHERE username = ?").get(username) ?? null
+  );
+  if (defaultUser) return defaultUser;
   if (isSupabaseActive()) {
-    const { data } = await getSupabase()
+    const { data, error } = await getSupabase()
       .from("users")
       .select("*")
       .eq("username", username)
-      .single();
+      .maybeSingle();
+    if (error) throw error;
     return data;
   }
   if (isNeonActive()) {
@@ -635,10 +643,58 @@ export async function getAdminUser(username: string): Promise<any> {
     );
     return rows[0] ?? null;
   }
-  assertSqliteActive();
-  return (
-    db.query("SELECT * FROM users WHERE username = ?").get(username) ?? null
+  return null;
+}
+
+export async function copyAdminUserToDefault(user: any): Promise<void> {
+  db.run(
+    `INSERT OR IGNORE INTO users (id, username, password_hash, role, created_at)
+     VALUES (?, ?, ?, ?, ?)`,
+    [
+      user.id,
+      user.username,
+      user.password_hash,
+      user.role ?? "admin",
+      user.created_at ?? new Date().toISOString(),
+    ],
   );
+}
+
+async function hashSessionToken(token: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(token),
+  );
+  return Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+}
+
+export async function createAuthSession(): Promise<string> {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  const token = Array.from(bytes, (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+  const tokenHash = await hashSessionToken(token);
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  db.run("DELETE FROM auth_sessions WHERE expires_at <= ?", [
+    new Date().toISOString(),
+  ]);
+  db.run(
+    "INSERT INTO auth_sessions (token_hash, expires_at) VALUES (?, ?)",
+    [tokenHash, expiresAt],
+  );
+  return token;
+}
+
+export async function isAuthSessionValid(token: string): Promise<boolean> {
+  const tokenHash = await hashSessionToken(token);
+  const row = db
+    .query(
+      "SELECT 1 AS valid FROM auth_sessions WHERE token_hash = ? AND expires_at > ?",
+    )
+    .get(tokenHash, new Date().toISOString());
+  return Boolean(row);
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -727,15 +783,18 @@ export async function testConnection(
   }
 
   if (driver === "neon") {
-    if (!process.env.NEON_DATABASE_URL) {
+    const connectionString =
+      credentials?.connectionString ||
+      getDatabaseConfig().neon.connectionString;
+    if (!connectionString) {
       return {
         success: false,
-        message: "NEON_DATABASE_URL belum dikonfigurasi sebagai secret ENV.",
+        message: "Connection string Neon wajib diisi.",
         latencyMs: Date.now() - start,
       };
     }
     try {
-      await getNeon().query("SELECT 1 AS connected");
+      await neon(connectionString).query("SELECT 1 AS connected");
       return {
         success: true,
         message: `Berhasil terhubung ke Neon (${Date.now() - start}ms).`,
@@ -781,7 +840,6 @@ export async function migrateDataBetweenDrivers(
   try {
     let invoices: any[];
     let settings: any[];
-    let users: any[];
 
     if (fromDriver === "sqlite") {
       invoices = (db.query("SELECT * FROM invoices").all() as any[]).map(
@@ -793,32 +851,26 @@ export async function migrateDataBetweenDrivers(
           value: safeJsonParse(row.value, null),
         }),
       );
-      users = db.query("SELECT * FROM users").all() as any[];
     } else if (fromDriver === "supabase") {
       const sb = getSupabase();
-      const [invoiceResult, settingResult, userResult] = await Promise.all([
+      const [invoiceResult, settingResult] = await Promise.all([
         sb.from("invoices").select("*"),
         sb.from("settings").select("*"),
-        sb.from("users").select("*"),
       ]);
       if (invoiceResult.error) throw invoiceResult.error;
       if (settingResult.error) throw settingResult.error;
-      if (userResult.error) throw userResult.error;
       invoices = (invoiceResult.data || []).map(mapSupabaseInvoiceToApp);
       settings = settingResult.data || [];
-      users = userResult.data || [];
     } else {
-      const [invoiceRows, settingRows, userRows] = await Promise.all([
+      const [invoiceRows, settingRows] = await Promise.all([
         getNeon().query("SELECT * FROM invoices"),
         getNeon().query("SELECT * FROM settings"),
-        getNeon().query("SELECT * FROM users"),
       ]);
       invoices = invoiceRows.map(mapSupabaseInvoiceToApp);
       settings = settingRows.map((row: any) => ({
         key: row.key,
         value: parseJsonValue(row.value, null),
       }));
-      users = userRows;
     }
 
     for (const invoice of invoices) {
@@ -831,50 +883,7 @@ export async function migrateDataBetweenDrivers(
         toDriver as DatabaseConfig["activeDriver"],
       );
     }
-    for (const user of users) {
-      if (toDriver === "sqlite") {
-        db.run(
-          `INSERT INTO users (id, username, password_hash, role, created_at)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET
-             username = excluded.username,
-             password_hash = excluded.password_hash,
-             role = excluded.role,
-             created_at = excluded.created_at`,
-          [
-            user.id,
-            user.username,
-            user.password_hash,
-            user.role ?? "admin",
-            user.created_at ?? new Date().toISOString(),
-          ],
-        );
-      } else if (toDriver === "supabase") {
-        const { error } = await getSupabase()
-          .from("users")
-          .upsert(user, { onConflict: "id" });
-        if (error) throw error;
-      } else {
-        await getNeon().query(
-          `INSERT INTO users (id, username, password_hash, role, created_at)
-           VALUES ($1, $2, $3, $4, $5)
-           ON CONFLICT (id) DO UPDATE SET
-             username = EXCLUDED.username,
-             password_hash = EXCLUDED.password_hash,
-             role = EXCLUDED.role,
-             created_at = EXCLUDED.created_at`,
-          [
-            user.id,
-            user.username,
-            user.password_hash,
-            user.role ?? "admin",
-            user.created_at ?? new Date().toISOString(),
-          ],
-        );
-      }
-    }
-
-    const count = invoices.length + settings.length + users.length;
+    const count = invoices.length + settings.length;
     return {
       success: true,
       count,

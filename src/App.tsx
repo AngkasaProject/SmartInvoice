@@ -64,8 +64,16 @@ const MainApp = ({ onLogout }: { onLogout: () => void }) => {
 
   useEffect(() => {
     refreshInvoices();
-    fetchBusinessProfile().then((p) => setBusiness(p));
-    fetchOpenWaConfig().then((cfg) => setOpenWaConfig(cfg));
+    fetchBusinessProfile()
+      .then((profile) => setBusiness(profile))
+      .catch((err: Error) =>
+        toast.error(`Gagal memuat profil usaha: ${err.message}`),
+      );
+    fetchOpenWaConfig()
+      .then((config) => setOpenWaConfig(config))
+      .catch((err: Error) =>
+        toast.error(`Gagal memuat pengaturan WhatsApp: ${err.message}`),
+      );
   }, []);
 
   const handleSaveInvoice = async (
@@ -365,8 +373,37 @@ const MainApp = ({ onLogout }: { onLogout: () => void }) => {
 // ==========================================
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    return Boolean(localStorage.getItem("smartinvoice_auth"));
+    return Boolean(
+      localStorage.getItem("smartinvoice_auth")?.startsWith("local_"),
+    );
   });
+  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(() => {
+    const token = localStorage.getItem("smartinvoice_auth");
+    return Boolean(token && !token.startsWith("local_"));
+  });
+
+  useEffect(() => {
+    const token = localStorage.getItem("smartinvoice_auth");
+    if (!token || token.startsWith("local_")) return;
+
+    fetch("/api/auth/session", {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(async (res) => {
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          localStorage.removeItem("smartinvoice_auth");
+          setIsAuthenticated(false);
+          return;
+        }
+        setIsAuthenticated(true);
+      })
+      .catch(() => {
+        localStorage.removeItem("smartinvoice_auth");
+        setIsAuthenticated(false);
+      })
+      .finally(() => setIsAuthLoading(false));
+  }, []);
 
   const handleLogout = () => {
     localStorage.removeItem("smartinvoice_auth");
@@ -385,7 +422,11 @@ export default function App() {
         <Route
           path="/*"
           element={
-            isAuthenticated ? (
+            isAuthLoading ? (
+              <div className="min-h-screen flex items-center justify-center bg-slate-50 text-sm text-slate-500">
+                Memeriksa sesi...
+              </div>
+            ) : isAuthenticated ? (
               <MainApp onLogout={handleLogout} />
             ) : (
               <AuthPage onLoginSuccess={() => setIsAuthenticated(true)} />

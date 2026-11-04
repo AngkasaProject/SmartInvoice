@@ -21,8 +21,9 @@ export const defaultDatabaseConfig: DatabaseConfig = {
   supabase: {
     url: (import.meta as any).env?.VITE_SUPABASE_URL || "",
     anonKey: (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || "",
+    configured: false,
   },
-  neon: { configured: false },
+  neon: { configured: false, connectionString: "" },
 };
 
 // Interface untuk respons konfigurasi (menambahkan isEnvLocked)
@@ -30,10 +31,21 @@ export interface DbConfigResponse {
   config: DatabaseConfig;
   isEnvLocked: boolean;
   canMigrate: boolean;
+  isWorkersRuntime?: boolean;
 }
 
 // In-memory cache for ultra-fast UI rendering
 let cachedDbConfig: DatabaseConfig = defaultDatabaseConfig;
+
+function databaseAuthHeaders(
+  includeContentType = false,
+): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (includeContentType) headers["Content-Type"] = "application/json";
+  const token = localStorage.getItem("smartinvoice_auth");
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
+}
 
 // ==========================================
 // LOCALSTORAGE FALLBACK (Mode Anonim)
@@ -82,7 +94,9 @@ function saveLocalSetting<T>(key: string, value: T): void {
 
 export async function fetchDatabaseConfig(): Promise<DbConfigResponse> {
   try {
-    const res = await fetch("/api/db/config");
+    const res = await fetch("/api/db/config", {
+      headers: databaseAuthHeaders(),
+    });
     if (res.ok) {
       const data = await res.json();
       if (data.success && data.config) {
@@ -91,6 +105,7 @@ export async function fetchDatabaseConfig(): Promise<DbConfigResponse> {
           config: data.config,
           isEnvLocked: data.isEnvLocked || false,
           canMigrate: data.canMigrate || false,
+          isWorkersRuntime: Boolean(data.isWorkersRuntime),
         };
       }
     }
@@ -114,7 +129,7 @@ export async function saveDatabaseConfig(
   try {
     const res = await fetch("/api/db/config", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: databaseAuthHeaders(true),
       body: JSON.stringify(config),
     });
     const data = await res.json();
@@ -143,7 +158,7 @@ export async function testDatabaseConnection(
   try {
     const res = await fetch("/api/db/test", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: databaseAuthHeaders(true),
       body: JSON.stringify({ driver, credentials }),
     });
     const data = await res.json();
@@ -163,7 +178,7 @@ export async function migrateDatabase(
   try {
     const res = await fetch("/api/db/migrate", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: databaseAuthHeaders(true),
       body: JSON.stringify({ fromDriver, toDriver }),
     });
     const data = await res.json();
@@ -185,47 +200,53 @@ export async function migrateDatabase(
 // ==========================================
 
 export async function fetchAllInvoices(): Promise<Invoice[]> {
+  let res: Response;
   try {
-    const res = await fetch("/api/invoices");
-    if (res.ok) {
-      const data = await res.json();
-      if (data.success && Array.isArray(data.invoices)) {
-        return data.invoices;
-      }
-    }
+    res = await fetch("/api/invoices");
   } catch (err) {
     console.warn("API offline, beralih ke LocalStorage", err);
+    return getLocalInvoices();
   }
-  // Fallback ke LocalStorage
-  return getLocalInvoices();
+  if (!res.ok) {
+    throw new Error(`Gagal memuat invoice dari database aktif (HTTP ${res.status}).`);
+  }
+  const data = await res.json();
+  if (data.success && Array.isArray(data.invoices)) return data.invoices;
+  throw new Error("Respons server tidak berisi daftar invoice yang valid.");
 }
 
 export async function saveInvoiceRecord(invoice: Invoice): Promise<void> {
+  let res: Response;
   try {
-    const res = await fetch("/api/invoices", {
+    res = await fetch("/api/invoices", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(invoice),
     });
-    if (res.ok) return; // Berhasil simpan ke server
   } catch (err) {
     console.warn("API offline, menyimpan ke LocalStorage", err);
+    saveLocalInvoice(invoice);
+    return;
   }
-  // Fallback ke LocalStorage
-  saveLocalInvoice(invoice);
+  if (!res.ok) {
+    throw new Error(`Gagal menyimpan invoice ke database aktif (HTTP ${res.status}).`);
+  }
 }
 
 export async function deleteInvoiceRecord(id: string): Promise<void> {
+  let res: Response;
   try {
-    const res = await fetch(`/api/invoices/${encodeURIComponent(id)}`, {
+    res = await fetch(`/api/invoices/${encodeURIComponent(id)}`, {
       method: "DELETE",
     });
-    if (res.ok) return;
   } catch (err) {
     console.warn("API offline, menghapus dari LocalStorage", err);
+    deleteLocalInvoice(id);
+    return;
   }
-  // Fallback ke LocalStorage
-  deleteLocalInvoice(id);
+  if (!res.ok) {
+    throw new Error(`Gagal menghapus invoice dari database aktif (HTTP ${res.status}).`);
+  }
 }
 
 // ==========================================
@@ -236,37 +257,40 @@ export async function fetchSetting<T>(
   key: string,
   defaultValue: T,
 ): Promise<T> {
+  let res: Response;
   try {
-    const res = await fetch(`/api/settings/${encodeURIComponent(key)}`);
-    if (res.ok) {
-      const data = await res.json();
-      if (data.success && data.value !== null && data.value !== undefined) {
-        return data.value as T;
-      }
-    }
+    res = await fetch(`/api/settings/${encodeURIComponent(key)}`);
   } catch (err) {
     console.warn(`API offline, mengambil ${key} dari LocalStorage`, err);
+    return getLocalSetting<T>(key, defaultValue);
   }
-  // Fallback ke LocalStorage
-  return getLocalSetting<T>(key, defaultValue);
+  if (!res.ok) {
+    throw new Error(`Gagal memuat pengaturan ${key} dari database aktif (HTTP ${res.status}).`);
+  }
+  const data = await res.json();
+  if (data.success) return (data.value ?? defaultValue) as T;
+  throw new Error(`Server gagal memuat pengaturan ${key}.`);
 }
 
 export async function saveSettingRecord<T>(
   key: string,
   value: T,
 ): Promise<void> {
+  let res: Response;
   try {
-    const res = await fetch(`/api/settings/${encodeURIComponent(key)}`, {
+    res = await fetch(`/api/settings/${encodeURIComponent(key)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ value }),
     });
-    if (res.ok) return;
   } catch (err) {
     console.warn(`API offline, menyimpan ${key} ke LocalStorage`, err);
+    saveLocalSetting<T>(key, value);
+    return;
   }
-  // Fallback ke LocalStorage
-  saveLocalSetting<T>(key, value);
+  if (!res.ok) {
+    throw new Error(`Gagal menyimpan pengaturan ${key} ke database aktif (HTTP ${res.status}).`);
+  }
 }
 
 // Convenience wrappers for specific settings

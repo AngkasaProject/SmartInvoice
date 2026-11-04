@@ -57,19 +57,102 @@ interface Env {
   FONNTE_TOKEN?: string;
 }
 
-let _supabase: SupabaseClient | null = null;
+type WorkerDatabaseConfig = {
+  activeDriver: WorkerDatabaseDriver;
+  supabase: { url: string; anonKey: string };
+  neon: { connectionString: string };
+};
+
+const runtimeDatabaseConfigs = new WeakMap<object, WorkerDatabaseConfig>();
+const supabaseClients = new Map<string, SupabaseClient>();
+
+function getRuntimeDatabaseConfig(env: Env): WorkerDatabaseConfig {
+  return (
+    runtimeDatabaseConfigs.get(env) || {
+      activeDriver: getDatabaseDriver(env),
+      supabase: {
+        url: env.SUPABASE_URL || "",
+        anonKey: env.SUPABASE_ANON_KEY || "",
+      },
+      neon: { connectionString: env.NEON_DATABASE_URL || "" },
+    }
+  );
+}
+
+async function resolveRuntimeDatabaseConfig(
+  env: Env,
+): Promise<WorkerDatabaseConfig> {
+  let stored: Partial<WorkerDatabaseConfig> = {};
+  const isLocked = Boolean(
+    env.DATABASE_DRIVER ||
+      env.NEON_DATABASE_URL ||
+      env.SUPABASE_URL ||
+      env.SUPABASE_ANON_KEY,
+  );
+
+  if (!isLocked && env.DB) {
+    const row = await env.DB
+      .prepare("SELECT value FROM app_config WHERE key = ?")
+      .bind("database_config")
+      .first<{ value: string }>();
+    if (row?.value) stored = JSON.parse(row.value);
+  }
+
+  const requested = env.DATABASE_DRIVER?.toLowerCase();
+  const activeDriver = requested
+    ? requested
+    : stored.activeDriver ||
+      (env.DB
+        ? "d1"
+        : env.NEON_DATABASE_URL
+          ? "neon"
+          : env.SUPABASE_URL && env.SUPABASE_ANON_KEY
+            ? "supabase"
+            : "d1");
+  if (
+    activeDriver !== "d1" &&
+    activeDriver !== "supabase" &&
+    activeDriver !== "neon"
+  ) {
+    throw new Error(
+      `DATABASE_DRIVER '${activeDriver}' tidak didukung oleh Cloudflare Workers.`,
+    );
+  }
+
+  const config: WorkerDatabaseConfig = {
+    activeDriver,
+    supabase: {
+      url: env.SUPABASE_URL || stored.supabase?.url || "",
+      anonKey: env.SUPABASE_ANON_KEY || stored.supabase?.anonKey || "",
+    },
+    neon: {
+      connectionString:
+        env.NEON_DATABASE_URL || stored.neon?.connectionString || "",
+    },
+  };
+  runtimeDatabaseConfigs.set(env, config);
+  return config;
+}
+
 function getSupabase(env: Env): SupabaseClient {
-  if (_supabase) return _supabase;
-  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+  const config = getRuntimeDatabaseConfig(env);
+  if (!config.supabase.url || !config.supabase.anonKey) {
     throw new Error("Supabase URL/Key belum diatur.");
   }
-  _supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY);
-  return _supabase;
+  const cacheKey = `${config.supabase.url}:${config.supabase.anonKey}`;
+  let client = supabaseClients.get(cacheKey);
+  if (!client) {
+    client = createClient(config.supabase.url, config.supabase.anonKey);
+    supabaseClients.set(cacheKey, client);
+  }
+  return client;
 }
 
 type WorkerDatabaseDriver = "d1" | "supabase" | "neon";
 
 function getDatabaseDriver(env: Env): WorkerDatabaseDriver {
+  const configured = runtimeDatabaseConfigs.get(env);
+  if (configured) return configured.activeDriver;
   const requested = env.DATABASE_DRIVER?.toLowerCase();
   if (requested) {
     if (requested === "d1" || requested === "supabase" || requested === "neon") {
@@ -86,14 +169,11 @@ function getDatabaseDriver(env: Env): WorkerDatabaseDriver {
 }
 
 function isDatabaseConfigured(env: Env): boolean {
-  switch (getDatabaseDriver(env)) {
-    case "d1":
-      return Boolean(env.DB);
-    case "neon":
-      return Boolean(env.NEON_DATABASE_URL);
-    case "supabase":
-      return Boolean(env.SUPABASE_URL && env.SUPABASE_ANON_KEY);
-  }
+  const config = getRuntimeDatabaseConfig(env);
+  if (config.activeDriver === "d1") return Boolean(env.DB);
+  if (config.activeDriver === "neon")
+    return Boolean(config.neon.connectionString);
+  return Boolean(config.supabase.url && config.supabase.anonKey);
 }
 
 function requireDatabase(env: Env): WorkerDatabaseDriver {
@@ -103,18 +183,19 @@ function requireDatabase(env: Env): WorkerDatabaseDriver {
       driver === "d1"
         ? "Binding D1 'DB' belum dikonfigurasi di Wrangler."
         : driver === "neon"
-          ? "NEON_DATABASE_URL belum dikonfigurasi."
-          : "SUPABASE_URL dan SUPABASE_ANON_KEY belum dikonfigurasi.",
+          ? "Connection string Neon belum dikonfigurasi."
+          : "URL dan key Supabase belum dikonfigurasi.",
     );
   }
   return driver;
 }
 
 function getNeon(env: Env) {
-  if (!env.NEON_DATABASE_URL) {
-    throw new Error("NEON_DATABASE_URL belum dikonfigurasi.");
+  const connectionString = getRuntimeDatabaseConfig(env).neon.connectionString;
+  if (!connectionString) {
+    throw new Error("Connection string Neon belum dikonfigurasi.");
   }
-  return neon(env.NEON_DATABASE_URL);
+  return neon(connectionString);
 }
 
 function toPostgresPlaceholders(query: string): string {
@@ -254,7 +335,13 @@ async function getSettingValue(env: Env, key: string) {
 }
 
 async function getUserByUsername(env: Env, username: string) {
-  const driver = requireDatabase(env);
+  if (!env.DB) throw new Error("Binding D1 'DB' belum dikonfigurasi.");
+  const defaultUser = await env.DB
+    .prepare("SELECT * FROM users WHERE username = ?")
+    .bind(username)
+    .first();
+  if (defaultUser) return defaultUser;
+  const driver = getDatabaseDriver(env);
   if (driver === "supabase") {
     const { data, error } = await getSupabase(env)
       .from("users")
@@ -264,7 +351,99 @@ async function getUserByUsername(env: Env, username: string) {
     if (error) throw error;
     return data;
   }
-  return queryFirst(env, "SELECT * FROM users WHERE username = ?", [username]);
+  if (driver === "neon") {
+    return queryFirst(env, "SELECT * FROM users WHERE username = ?", [username]);
+  }
+  return null;
+}
+
+async function countAdminUsers(env: Env): Promise<number> {
+  if (!env.DB) throw new Error("Binding D1 'DB' belum dikonfigurasi.");
+  const row = await env.DB
+    .prepare("SELECT COUNT(*) AS c FROM users")
+    .first<{ c: number }>();
+  const defaultCount = Number(row?.c) || 0;
+  if (defaultCount) return defaultCount;
+  const driver = getDatabaseDriver(env);
+  if (driver === "supabase") {
+    const { count, error } = await getSupabase(env)
+      .from("users")
+      .select("*", { count: "exact", head: true });
+    if (error) throw error;
+    return count || 0;
+  }
+  if (driver === "neon") {
+    const legacyRow = await queryFirst<{ c: number }>(
+      env,
+      "SELECT COUNT(*) AS c FROM users",
+    );
+    return Number(legacyRow?.c) || 0;
+  }
+  return 0;
+}
+
+async function copyAdminUserToDefault(env: Env, user: any): Promise<void> {
+  if (!env.DB) throw new Error("Binding D1 'DB' belum dikonfigurasi.");
+  const result = await env.DB
+    .prepare(
+      `INSERT OR IGNORE INTO users (id, username, password_hash, role, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      user.id,
+      user.username,
+      user.password_hash,
+      user.role || "admin",
+      user.created_at || new Date().toISOString(),
+    )
+    .run();
+  if (!result.success) throw new Error(result.error || "Gagal menyimpan admin.");
+}
+
+async function hashSessionToken(token: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(token),
+  );
+  return Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+}
+
+async function createAuthSession(env: Env): Promise<string> {
+  if (!env.DB) throw new Error("Binding D1 'DB' belum dikonfigurasi.");
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  const token = Array.from(bytes, (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+  const tokenHash = await hashSessionToken(token);
+  const now = new Date();
+  const expiresAt = new Date(
+    now.getTime() + 30 * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  await env.DB.prepare("DELETE FROM auth_sessions WHERE expires_at <= ?")
+    .bind(now.toISOString())
+    .run();
+  const result = await env.DB
+    .prepare("INSERT INTO auth_sessions (token_hash, expires_at) VALUES (?, ?)")
+    .bind(tokenHash, expiresAt)
+    .run();
+  if (!result.success) throw new Error(result.error || "Gagal membuat sesi.");
+  return token;
+}
+
+async function hasAdminSession(request: Request, env: Env): Promise<boolean> {
+  if (!env.DB) return false;
+  const token = request.headers.get("Authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
+  if (!token) return false;
+  const tokenHash = await hashSessionToken(token);
+  const session = await env.DB
+    .prepare(
+      "SELECT 1 AS valid FROM auth_sessions WHERE token_hash = ? AND expires_at > ?",
+    )
+    .bind(tokenHash, new Date().toISOString())
+    .first();
+  return Boolean(session);
 }
 
 function getWhatsAppEnvConfig(env: Env) {
@@ -297,8 +476,7 @@ export default {
     }
 
     try {
-      const activeDriver = getDatabaseDriver(env);
-      const hasDatabase = isDatabaseConfigured(env);
+      const activeDriver = (await resolveRuntimeDatabaseConfig(env)).activeDriver;
 
       // ==========================================
       // 1. ENDPOINT PUBLIK (Untuk Link Print)
@@ -341,26 +519,25 @@ export default {
       // ==========================================
       // 2. ENDPOINT AUTH
       // ==========================================
+      if (url.pathname === "/api/auth/session" && request.method === "GET") {
+        const valid = await hasAdminSession(request, env);
+        return new Response(
+          JSON.stringify({
+            success: valid,
+            message: valid ? undefined : "Sesi admin tidak valid atau telah kedaluwarsa.",
+          }),
+          {
+            status: valid ? 200 : 401,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          },
+        );
+      }
+
       if (url.pathname === "/api/auth/status" && request.method === "GET") {
-        requireDatabase(env);
-        let count = 0;
-        if (activeDriver === "supabase") {
-          const { count: userCount, error } = await getSupabase(env)
-            .from("users")
-            .select("*", { count: "exact", head: true });
-          if (error) throw error;
-          count = userCount || 0;
-        } else {
-          const row = await queryFirst<{ c: number }>(
-            env,
-            "SELECT COUNT(*) AS c FROM users",
-          );
-          count = Number(row?.c) || 0;
-        }
         return new Response(
           JSON.stringify({
             success: true,
-            hasAdmin: count > 0,
+            hasAdmin: (await countAdminUsers(env)) > 0,
             isAnonymous: false,
             activeDriver,
           }),
@@ -371,7 +548,7 @@ export default {
       if (
         (url.pathname === "/api/auth/setup" ||
           url.pathname === "/api/auth/login") &&
-        !hasDatabase
+        !env.DB
       ) {
         return new Response(
           JSON.stringify({
@@ -386,21 +563,7 @@ export default {
       }
 
       if (url.pathname === "/api/auth/setup" && request.method === "POST") {
-        requireDatabase(env);
-        let hasAdmin = false;
-        if (activeDriver === "supabase") {
-          const { count, error } = await getSupabase(env)
-            .from("users")
-            .select("*", { count: "exact", head: true });
-          if (error) throw error;
-          hasAdmin = (count || 0) > 0;
-        } else {
-          const row = await queryFirst<{ c: number }>(
-            env,
-            "SELECT COUNT(*) AS c FROM users",
-          );
-          hasAdmin = Number(row?.c) > 0;
-        }
+        const hasAdmin = (await countAdminUsers(env)) > 0;
         if (hasAdmin) {
           return new Response(
             JSON.stringify({ success: false, message: "Admin sudah ada." }),
@@ -418,26 +581,20 @@ export default {
           password_hash: passwordHash,
           role: "admin",
         };
-        if (activeDriver === "supabase") {
-          const { error } = await getSupabase(env).from("users").insert({
-            ...newUser,
-            created_at: new Date().toISOString(),
-          });
-          if (error) throw error;
-        } else {
-          await executeQuery(
-            env,
+        const result = await env.DB!
+          .prepare(
             `INSERT INTO users (id, username, password_hash, role, created_at)
              VALUES (?, ?, ?, ?, ?)`,
-            [
-              newUser.id,
-              newUser.username,
-              newUser.password_hash,
-              newUser.role,
-              new Date().toISOString(),
-            ],
-          );
-        }
+          )
+          .bind(
+            newUser.id,
+            newUser.username,
+            newUser.password_hash,
+            newUser.role,
+            new Date().toISOString(),
+          )
+          .run();
+        if (!result.success) throw new Error(result.error || "Gagal membuat admin.");
         return new Response(
           JSON.stringify({ success: true, message: "Admin dibuat." }),
           {
@@ -447,7 +604,6 @@ export default {
       }
 
       if (url.pathname === "/api/auth/login" && request.method === "POST") {
-        requireDatabase(env);
         const body: any = await request.json();
         const user = await getUserByUsername(env, body.username);
         if (!user) {
@@ -472,10 +628,11 @@ export default {
             },
           );
         }
+        await copyAdminUserToDefault(env, user);
         return new Response(
           JSON.stringify({
             success: true,
-            token: `auth_${Date.now()}`,
+            token: await createAuthSession(env),
             user: { username: user.username },
           }),
           {
@@ -488,21 +645,32 @@ export default {
       // 3. ENDPOINT DB CONFIG
       // ==========================================
       if (url.pathname === "/api/db/config" && request.method === "GET") {
+        if (!(await hasAdminSession(request, env))) {
+          return new Response(
+            JSON.stringify({ success: false, message: "Sesi admin tidak valid atau telah kedaluwarsa." }),
+            { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+        const runtimeConfig = getRuntimeDatabaseConfig(env);
         const config = {
-          activeDriver,
+          activeDriver: runtimeConfig.activeDriver,
           sqlite: { filePath: "" },
           d1: { binding: "DB" },
           supabase: {
-            url: env.SUPABASE_URL || "",
-            anonKey: env.SUPABASE_ANON_KEY || "",
+            url: runtimeConfig.supabase.url,
+            anonKey: "",
+            configured: Boolean(runtimeConfig.supabase.anonKey),
           },
-          neon: { configured: Boolean(env.NEON_DATABASE_URL) },
+          neon: {
+            configured: Boolean(runtimeConfig.neon.connectionString),
+            connectionString: "",
+          },
         };
         const isEnvLocked = Boolean(
-          env.DB ||
-            env.DATABASE_DRIVER ||
+          env.DATABASE_DRIVER ||
             env.NEON_DATABASE_URL ||
-            (env.SUPABASE_URL && env.SUPABASE_ANON_KEY),
+            env.SUPABASE_URL ||
+            env.SUPABASE_ANON_KEY,
         );
         return new Response(
           JSON.stringify({
@@ -510,6 +678,7 @@ export default {
             config,
             isEnvLocked,
             canMigrate: false,
+            isWorkersRuntime: true,
           }),
           {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -518,32 +687,136 @@ export default {
       }
 
       if (url.pathname === "/api/db/config" && request.method === "POST") {
+        if (!(await hasAdminSession(request, env))) {
+          return new Response(
+            JSON.stringify({ success: false, message: "Sesi admin tidak valid atau telah kedaluwarsa." }),
+            { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+        if (
+          env.DATABASE_DRIVER ||
+          env.NEON_DATABASE_URL ||
+          env.SUPABASE_URL ||
+          env.SUPABASE_ANON_KEY
+        ) {
+          return new Response(
+            JSON.stringify({ success: false, message: "Konfigurasi database dikunci oleh Environment Variable." }),
+            { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+        if (!env.DB) throw new Error("Binding D1 'DB' belum dikonfigurasi.");
+        const body: any = await request.json();
+        const previous = getRuntimeDatabaseConfig(env);
+        const config: WorkerDatabaseConfig = {
+          activeDriver: body.activeDriver,
+          supabase: {
+            url: body.supabase?.url || previous.supabase.url,
+            anonKey: body.supabase?.anonKey || previous.supabase.anonKey,
+          },
+          neon: {
+            connectionString:
+              body.neon?.connectionString || previous.neon.connectionString,
+          },
+        };
+        if (
+          config.activeDriver !== "d1" &&
+          config.activeDriver !== "neon" &&
+          config.activeDriver !== "supabase"
+        ) {
+          return new Response(
+            JSON.stringify({ success: false, message: "Driver database tidak valid." }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+        if (config.activeDriver === "d1" && !env.DB) {
+          return new Response(
+            JSON.stringify({ success: false, message: "Binding D1 'DB' belum dikonfigurasi." }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+        if (
+          config.activeDriver === "neon" &&
+          !config.neon.connectionString
+        ) {
+          return new Response(
+            JSON.stringify({ success: false, message: "Connection string Neon wajib diisi." }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+        if (
+          config.activeDriver === "supabase" &&
+          (!config.supabase.url || !config.supabase.anonKey)
+        ) {
+          return new Response(
+            JSON.stringify({ success: false, message: "URL dan Anon Key Supabase wajib diisi." }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+        const saved = await env.DB
+          .prepare(
+            `INSERT INTO app_config (key, value, updated_at)
+             VALUES (?, ?, ?)
+             ON CONFLICT(key) DO UPDATE SET
+               value = excluded.value, updated_at = excluded.updated_at`,
+          )
+          .bind("database_config", JSON.stringify(config), new Date().toISOString())
+          .run();
+        if (!saved.success) throw new Error(saved.error || "Gagal menyimpan konfigurasi.");
+        runtimeDatabaseConfigs.set(env, config);
         return new Response(
           JSON.stringify({
-            success: false,
-            message: "Konfigurasi database Workers dikelola melalui Wrangler dan secrets.",
+            success: true,
+            config: {
+              activeDriver: config.activeDriver,
+              sqlite: { filePath: "" },
+              d1: { binding: "DB" },
+              supabase: {
+                url: config.supabase.url,
+                anonKey: "",
+                configured: Boolean(config.supabase.anonKey),
+              },
+              neon: { configured: Boolean(config.neon.connectionString), connectionString: "" },
+            },
+            message: "Konfigurasi disimpan",
           }),
           {
-            status: 403,
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           },
         );
       }
 
       if (url.pathname === "/api/db/test" && request.method === "POST") {
+        if (!(await hasAdminSession(request, env))) {
+          return new Response(
+            JSON.stringify({ success: false, message: "Sesi admin tidak valid atau telah kedaluwarsa." }),
+            { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
         const body: any = await request.json();
         const driver = body.driver || activeDriver;
+        const credentials = body.credentials || {};
         const start = Date.now();
         if (driver === "d1" && env.DB) {
           await env.DB.prepare("SELECT 1 AS ok").first();
-        } else if (driver === "neon" && env.NEON_DATABASE_URL) {
-          await getNeon(env).query("SELECT 1 AS ok");
+        } else if (
+          driver === "neon" &&
+          (credentials.connectionString ||
+            getRuntimeDatabaseConfig(env).neon.connectionString)
+        ) {
+          await neon(
+            credentials.connectionString ||
+              getRuntimeDatabaseConfig(env).neon.connectionString,
+          ).query("SELECT 1 AS ok");
         } else if (
           driver === "supabase" &&
-          env.SUPABASE_URL &&
-          env.SUPABASE_ANON_KEY
+          (credentials.url || getRuntimeDatabaseConfig(env).supabase.url) &&
+          (credentials.anonKey || getRuntimeDatabaseConfig(env).supabase.anonKey)
         ) {
-          const { error } = await getSupabase(env)
+          const testClient = createClient(
+            credentials.url || getRuntimeDatabaseConfig(env).supabase.url,
+            credentials.anonKey || getRuntimeDatabaseConfig(env).supabase.anonKey,
+          );
+          const { error } = await testClient
             .from("settings")
             .select("key")
             .limit(1);
@@ -558,6 +831,23 @@ export default {
             latencyMs: Date.now() - start,
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      if (url.pathname === "/api/db/migrate" && request.method === "POST") {
+        if (!(await hasAdminSession(request, env))) {
+          return new Response(
+            JSON.stringify({ success: false, message: "Sesi admin tidak valid atau telah kedaluwarsa." }),
+            { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            success: false,
+            count: 0,
+            message: "Migrasi data tidak berjalan otomatis di Workers. Siapkan skema database tujuan dan pindahkan data secara terpisah.",
+          }),
+          { status: 501, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
 

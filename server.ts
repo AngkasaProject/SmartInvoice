@@ -16,10 +16,15 @@ import {
   createAdminUser,
   getAdminUser,
   getInvoiceById,
+  createAuthSession,
+  isAuthSessionValid,
+  copyAdminUserToDefault,
 } from "./server/db.ts";
 
 import {
   getDatabaseConfig,
+  getPublicDatabaseConfig,
+  isDatabaseEnvLocked,
   saveDatabaseConfig,
   getWhatsAppEnvConfig,
 } from "./server/config.ts";
@@ -127,13 +132,28 @@ async function startServer() {
           .json({ success: false, message: "Password salah." });
       }
 
+      await copyAdminUserToDefault(user);
       res.json({
         success: true,
-        token: `auth_${Date.now()}`,
+        token: await createAuthSession(),
         user: { username: user.username },
       });
     } catch (err: any) {
       console.error("Login Error:", err);
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  app.get("/api/auth/session", async (req, res) => {
+    try {
+      const token = req.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
+      if (!token || !(await isAuthSessionValid(token))) {
+        return res
+          .status(401)
+          .json({ success: false, message: "Sesi admin tidak valid atau telah kedaluwarsa." });
+      }
+      res.json({ success: true });
+    } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
     }
   });
@@ -215,26 +235,42 @@ async function startServer() {
   // ==========================================
   // DATABASE CONFIG ENDPOINTS
   // ==========================================
-  app.get("/api/db/config", (req, res) => {
+  const requireDatabaseSettingsSession = async (
+    req: express.Request,
+    res: express.Response,
+  ): Promise<boolean> => {
+    const token = req.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
+    if (token && (await isAuthSessionValid(token))) return true;
+    res.status(401).json({
+      success: false,
+      message: "Sesi admin tidak valid atau telah kedaluwarsa. Silakan login kembali.",
+    });
+    return false;
+  };
+
+  app.get("/api/db/config", async (req, res) => {
     try {
+      if (!(await requireDatabaseSettingsSession(req, res))) return;
       const config = getDatabaseConfig();
-      const isEnvLocked = Boolean(
-        process.env.DATABASE_DRIVER ||
-          process.env.SUPABASE_URL ||
-          process.env.NEON_DATABASE_URL,
-      );
-      res.json({ success: true, config, isEnvLocked, canMigrate: true });
+      res.json({
+        success: true,
+        config: getPublicDatabaseConfig(config),
+        isEnvLocked: isDatabaseEnvLocked(),
+        canMigrate: true,
+        isWorkersRuntime: false,
+      });
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
     }
   });
 
-  app.post("/api/db/config", (req, res) => {
+  app.post("/api/db/config", async (req, res) => {
     try {
+      if (!(await requireDatabaseSettingsSession(req, res))) return;
       const updated = saveDatabaseConfig(req.body);
       res.json({
         success: true,
-        config: updated,
+        config: getPublicDatabaseConfig(updated),
         message: "Konfigurasi disimpan",
       });
     } catch (err: any) {
@@ -244,6 +280,7 @@ async function startServer() {
 
   app.post("/api/db/test", async (req, res) => {
     try {
+      if (!(await requireDatabaseSettingsSession(req, res))) return;
       const { driver, credentials } = req.body;
       const result = await testConnection(driver, credentials);
       res.json(result);
@@ -254,6 +291,7 @@ async function startServer() {
 
   app.post("/api/db/migrate", async (req, res) => {
     try {
+      if (!(await requireDatabaseSettingsSession(req, res))) return;
       const { fromDriver, toDriver } = req.body;
       const result = await migrateDataBetweenDrivers(fromDriver, toDriver);
       res.json(result);

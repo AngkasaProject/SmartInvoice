@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import fs from "fs";
 import path from "path";
 
@@ -5,15 +6,98 @@ export interface DatabaseConfig {
   activeDriver: "sqlite" | "d1" | "supabase" | "neon";
   sqlite: { filePath: string };
   d1: { binding: string };
-  supabase: { url: string; anonKey: string };
-  neon: { configured: boolean };
+  supabase: { url: string; anonKey: string; configured?: boolean };
+  neon: { configured: boolean; connectionString?: string };
 }
 
 const DATA_DIR = path.resolve(process.cwd(), "data");
+const DB_PATH = path.resolve(
+  process.cwd(),
+  process.env.SQLITE_PATH || "./data/smartinvoice.db",
+);
 const CONFIG_PATH = path.join(DATA_DIR, "server-config.json");
 
+if (!fs.existsSync(path.dirname(DB_PATH))) {
+  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+}
+const defaultDb = new Database(DB_PATH, { create: true });
+defaultDb.run(`
+  CREATE TABLE IF NOT EXISTS app_config (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )
+`);
+
+function defaultConfig(): DatabaseConfig {
+  return {
+    activeDriver: "sqlite",
+    sqlite: { filePath: DB_PATH },
+    d1: { binding: "" },
+    supabase: { url: "", anonKey: "" },
+    neon: { configured: false },
+  };
+}
+
+function readStoredConfig(): DatabaseConfig {
+  const row = defaultDb
+    .query("SELECT value FROM app_config WHERE key = ?")
+    .get("database_config") as { value: string } | null;
+  if (row) return { ...defaultConfig(), ...JSON.parse(row.value) };
+
+  if (fs.existsSync(CONFIG_PATH)) {
+    const raw = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
+    const stored: DatabaseConfig = {
+      ...defaultConfig(),
+      ...raw,
+      activeDriver: raw.activeDriver === "mariadb" ? "sqlite" : raw.activeDriver,
+      sqlite: { ...defaultConfig().sqlite, ...raw.sqlite },
+      supabase: { ...defaultConfig().supabase, ...raw.supabase },
+      neon: {
+        ...defaultConfig().neon,
+        ...raw.neon,
+        connectionString:
+          raw.neon?.connectionString || process.env.NEON_DATABASE_URL || "",
+      },
+    };
+    persistConfig(stored);
+    try {
+      fs.unlinkSync(CONFIG_PATH);
+    } catch (error) {
+      console.warn(
+        "[config] Config lama sudah dipindahkan ke SQLite, tetapi file lama tidak dapat dihapus.",
+        error,
+      );
+    }
+    return stored;
+  }
+
+  return defaultConfig();
+}
+
+function persistConfig(config: DatabaseConfig): void {
+  defaultDb
+    .query(
+      `INSERT INTO app_config (key, value, updated_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET
+         value = excluded.value, updated_at = excluded.updated_at`,
+    )
+    .run("database_config", JSON.stringify(config), new Date().toISOString());
+}
+
+export function isDatabaseEnvLocked(): boolean {
+  return Boolean(
+    process.env.DATABASE_DRIVER ||
+      process.env.SUPABASE_URL ||
+      process.env.SUPABASE_ANON_KEY ||
+      process.env.NEON_DATABASE_URL,
+  );
+}
+
 export function getDatabaseConfig(): DatabaseConfig {
-  const requestedDriver = process.env.DATABASE_DRIVER;
+  const stored = readStoredConfig();
+  const requestedDriver = process.env.DATABASE_DRIVER?.toLowerCase();
   if (
     requestedDriver &&
     requestedDriver !== "sqlite" &&
@@ -25,95 +109,105 @@ export function getDatabaseConfig(): DatabaseConfig {
     );
   }
 
-  if (
+  if (!isDatabaseEnvLocked()) return stored;
+
+  const activeDriver =
     requestedDriver === "sqlite" ||
     requestedDriver === "neon" ||
     requestedDriver === "supabase"
-  ) {
-    return {
-      activeDriver: requestedDriver,
-      sqlite: { filePath: process.env.SQLITE_PATH || "./data/smartinvoice.db" },
-      d1: { binding: "" },
-      supabase: {
-        url: process.env.SUPABASE_URL || "",
-        anonKey: process.env.SUPABASE_ANON_KEY || "",
-      },
-      neon: { configured: Boolean(process.env.NEON_DATABASE_URL) },
-    };
-  }
+      ? requestedDriver
+      : process.env.NEON_DATABASE_URL
+        ? "neon"
+        : "supabase";
 
-  if (process.env.NEON_DATABASE_URL || process.env.SUPABASE_URL) {
-    const activeDriver =
-      requestedDriver === "neon" || requestedDriver === "supabase"
-        ? requestedDriver
-        : process.env.NEON_DATABASE_URL
-          ? "neon"
-          : "supabase";
-
-    return {
-      activeDriver,
-      sqlite: { filePath: "./data/smartinvoice.db" },
-      d1: { binding: "" },
-      supabase: {
-        url: process.env.SUPABASE_URL || "",
-        anonKey: process.env.SUPABASE_ANON_KEY || "",
-      },
-      neon: { configured: Boolean(process.env.NEON_DATABASE_URL) },
-    };
-  }
-
-  // File JSON lokal digunakan jika tidak ada driver ENV.
-  try {
-    if (fs.existsSync(CONFIG_PATH)) {
-      const raw = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
-      // Older configurations selected MariaDB but actually fell back to SQLite.
-      const activeDriver =
-        raw.activeDriver === "mariadb" ? "sqlite" : raw.activeDriver;
-      return {
-        activeDriver: activeDriver || "sqlite",
-        sqlite: raw.sqlite || { filePath: "./data/smartinvoice.db" },
-        d1: { binding: "" },
-        supabase: raw.supabase || { url: "", anonKey: "" },
-        neon: { configured: Boolean(process.env.NEON_DATABASE_URL) },
-      };
-    }
-  } catch (e) {
-    console.warn("[config] Gagal membaca config lokal.");
-  }
-
-  // 2. DEFAULT (SQLite for Bun/Docker)
   return {
-    activeDriver: "sqlite",
-    sqlite: { filePath: "./data/smartinvoice.db" },
-    d1: { binding: "" },
-    supabase: { url: "", anonKey: "" },
-    neon: { configured: false },
+    ...stored,
+    activeDriver,
+    sqlite: { filePath: DB_PATH },
+    supabase: {
+      url: process.env.SUPABASE_URL || stored.supabase.url,
+      anonKey: process.env.SUPABASE_ANON_KEY || stored.supabase.anonKey,
+    },
+    neon: {
+      configured: Boolean(
+        process.env.NEON_DATABASE_URL || stored.neon.connectionString,
+      ),
+      connectionString:
+        process.env.NEON_DATABASE_URL || stored.neon.connectionString || "",
+    },
+  };
+}
+
+export function getPublicDatabaseConfig(
+  config: DatabaseConfig = getDatabaseConfig(),
+): DatabaseConfig {
+  return {
+    ...config,
+    supabase: {
+      url: config.supabase.url,
+      anonKey: "",
+      configured: Boolean(config.supabase.anonKey),
+    },
+    neon: {
+      configured: Boolean(
+        config.neon.connectionString || process.env.NEON_DATABASE_URL,
+      ),
+      connectionString: "",
+    },
   };
 }
 
 export function saveDatabaseConfig(
-  config: Partial<DatabaseConfig>,
+  update: Partial<DatabaseConfig>,
 ): DatabaseConfig {
-  // Jika di Cloud/Env mode, jangan simpan ke file (karena tidak permanen)
-  if (
-    process.env.DATABASE_DRIVER ||
-    process.env.SUPABASE_URL ||
-    process.env.NEON_DATABASE_URL
-  ) {
-    console.warn(
-      "[config] Mode Environment Variable aktif. Perubahan config diabaikan.",
+  if (isDatabaseEnvLocked()) {
+    throw new Error(
+      "Konfigurasi database dikunci oleh Environment Variable.",
     );
-    return getDatabaseConfig();
   }
 
-  const current = getDatabaseConfig();
-  const merged = { ...current, ...config };
+  const current = readStoredConfig();
+  const next: DatabaseConfig = {
+    ...current,
+    ...update,
+    sqlite: { ...current.sqlite, ...update.sqlite, filePath: DB_PATH },
+    d1: { ...current.d1, ...update.d1 },
+    supabase: {
+      ...current.supabase,
+      ...update.supabase,
+      anonKey: update.supabase?.anonKey || current.supabase.anonKey,
+    },
+    neon: {
+      ...current.neon,
+      ...update.neon,
+      connectionString:
+        update.neon?.connectionString || current.neon.connectionString || "",
+    },
+  };
 
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2), "utf-8");
-  return merged;
+  if (next.activeDriver === "d1") {
+    throw new Error("Cloudflare D1 hanya tersedia pada runtime Workers.");
+  }
+  if (
+    next.activeDriver !== "sqlite" &&
+    next.activeDriver !== "supabase" &&
+    next.activeDriver !== "neon"
+  ) {
+    throw new Error("Driver database tidak valid untuk server Bun.");
+  }
+  if (next.activeDriver === "neon" && !next.neon.connectionString) {
+    throw new Error("Connection string Neon wajib diisi.");
+  }
+  if (
+    next.activeDriver === "supabase" &&
+    (!next.supabase.url || !next.supabase.anonKey)
+  ) {
+    throw new Error("URL dan Anon Key Supabase wajib diisi.");
+  }
+
+  persistConfig(next);
+  return next;
 }
-// Tambahkan di bagian bawah file server/config.ts
 
 export function getWhatsAppEnvConfig() {
   const provider = process.env.WHATSAPP_PROVIDER as
@@ -121,7 +215,7 @@ export function getWhatsAppEnvConfig() {
     | "fonnte"
     | undefined;
 
-  if (!provider) return null; // Jika tidak ada ENV, kembalikan null
+  if (!provider) return null;
 
   return {
     provider,
@@ -129,7 +223,7 @@ export function getWhatsAppEnvConfig() {
     apiKey: process.env.OPENWA_API_KEY || "",
     sessionName: process.env.OPENWA_SESSION_ID || "",
     fonnteToken: process.env.FONNTE_TOKEN || "",
-    endpointType: "sendPdf", // Default
+    endpointType: "sendPdf",
     customEndpointPath: "/sendPdf",
     autoSendCaption: process.env.WHATSAPP_CAPTION_TEMPLATE || "",
     directWhatsappFallback: true,

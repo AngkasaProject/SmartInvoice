@@ -176,15 +176,15 @@ docker compose up -d --build
 
 3. Aplikasi akan berjalan di http://localhost:3777 (atau sesuai port yang Anda atur di docker-compose.yml).
 
-4. SQLite adalah database default. Data SQLite dan file upload lokal tersimpan di folder `./data` (di-mount sebagai volume).
-5. Untuk memakai Neon, atur `NEON_DATABASE_URL` di `.env` (opsional `DATABASE_DRIVER=neon`). Connection string Neon tidak disimpan di UI. Supabase dapat dikonfigurasi melalui UI atau environment variables.
+4. SQLite adalah database default sekaligus penyimpan konfigurasi database dan akun admin. Data invoice/profil usaha dapat memakai driver yang dipilih di Pengaturan → Database. Data dan kredensial database tersimpan di database default; file upload lokal ada di `./data` (di-mount sebagai volume).
+5. Untuk memakai Neon atau Supabase tanpa mengunci pilihan driver, siapkan skema provider, lalu masukkan kredensialnya di Pengaturan → Database. Mengganti driver tidak menyalin invoice maupun pengaturan bisnis secara otomatis.
 
 6. Setup Admin Pertama
    Saat pertama kali dibuka, aplikasi akan meminta Anda membuat Akun Admin (Username & Password). Simpan kredensial ini untuk login.
 
 ### Setup Neon PostgreSQL
 
-Neon dapat digunakan dari Docker maupun Workers. Atur `NEON_DATABASE_URL` sebagai environment secret; pada Workers, tambahkan `DATABASE_DRIVER=neon` agar Neon dipilih alih-alih D1. Jalankan SQL dari [`migrations/neon/0001_init.sql`](./migrations/neon/0001_init.sql) di SQL Editor Neon sebelum menjalankan aplikasi.
+Neon dapat digunakan dari Docker maupun Workers. Jalankan SQL dari [`migrations/neon/0001_init.sql`](./migrations/neon/0001_init.sql) di SQL Editor Neon sebelum memilih Neon di Pengaturan → Database. Jika `DATABASE_DRIVER` atau secret provider diatur lewat environment, pilihan driver akan dikunci oleh environment.
 
 ### ☁️ Deployment via Cloudflare Workers (Cloud)
 
@@ -219,13 +219,13 @@ Konfigurasi `[assets]`, binding D1 `DB`, binding R2 `R2_BUCKET`, dan direktori m
 
 #### 3. Terapkan skema D1
 
-Migration membuat tabel invoice, settings, dan users:
+Migration membuat tabel invoice, settings, users, sesi admin, dan registry konfigurasi:
 
 ```powershell
 npx wrangler d1 migrations apply smartinvoice --remote
 ```
 
-Pastikan perintah selesai tanpa error sebelum deploy. File migration ada di [`migrations/d1/0001_init.sql`](./migrations/d1/0001_init.sql).
+Pastikan perintah selesai tanpa error sebelum deploy. Untuk database yang telah menjalankan migration sebelumnya, perintah yang sama akan menerapkan migration baru [`migrations/d1/0002_database_registry.sql`](./migrations/d1/0002_database_registry.sql).
 
 #### 4. Build dan deploy
 
@@ -239,7 +239,9 @@ Wrangler akan menampilkan URL Worker, biasanya `https://smart-invoice.<subdomain
 
 #### 5. Secrets dan konfigurasi opsional
 
-D1 adalah default; jangan atur `DATABASE_DRIVER` untuk mode ini. Rahasia Worker disimpan melalui Wrangler, bukan di `.env` lokal atau di UI:
+D1 adalah default dan tetap menyimpan konfigurasi provider serta akun admin meskipun data aplikasi dialihkan ke Neon/Supabase. Agar driver dapat diganti melalui Pengaturan, jangan atur `DATABASE_DRIVER`, `NEON_DATABASE_URL`, `SUPABASE_URL`, atau `SUPABASE_ANON_KEY`. Masukkan connection string/key provider di UI setelah deployment. Kredensial disimpan di D1 dan tidak dikirim kembali saat konfigurasi dibaca.
+
+Secret berikut opsional untuk integrasi WhatsApp:
 
 ```powershell
 npx wrangler secret put WHATSAPP_PROVIDER
@@ -248,7 +250,7 @@ npx wrangler secret put FONNTE_TOKEN
 
 Isi nilai saat Wrangler meminta input. Atur hanya secret yang diperlukan. Untuk OpenWA, masukkan `openwa` sebagai nilai `WHATSAPP_PROVIDER`, lalu tambahkan secret `OPENWA_SERVER_URL`, `OPENWA_API_KEY`, dan `OPENWA_SESSION_ID`.
 
-Untuk Neon, ubah bagian `[vars]` pada `wrangler.toml` menjadi:
+Jika ingin mengunci database ke Neon melalui environment (tanpa pilihan driver di UI), ubah bagian `[vars]` pada `wrangler.toml` menjadi:
 
 ```toml
 [vars]
@@ -262,16 +264,16 @@ Kemudian simpan connection string sebagai secret:
 npx wrangler secret put NEON_DATABASE_URL
 ```
 
-Sebelum deploy dengan Neon, jalankan [`migrations/neon/0001_init.sql`](./migrations/neon/0001_init.sql) melalui SQL Editor Neon. Untuk Supabase, tambahkan `DATABASE_DRIVER = "supabase"` di `[vars]`, lalu simpan URL dan key:
+Sebelum deploy dengan Neon, jalankan [`migrations/neon/0001_init.sql`](./migrations/neon/0001_init.sql) melalui SQL Editor Neon. Untuk mengunci ke Supabase melalui environment, tambahkan `DATABASE_DRIVER = "supabase"` di `[vars]`, lalu simpan URL dan key:
 
 ```powershell
 npx wrangler secret put SUPABASE_URL
 npx wrangler secret put SUPABASE_ANON_KEY
 ```
 
-R2 tetap diperlukan untuk upload gambar pada semua pilihan database di Workers.
+Jika driver dipilih lewat UI, D1 tetap menjadi registry konfigurasi dan penyimpan akun admin. Jalankan skema Neon di atas atau siapkan skema Supabase sebelum memilih provider. R2 tetap diperlukan untuk upload gambar pada semua pilihan database di Workers.
 
-Sesudah mengubah binding, variable, atau secret, jalankan ulang `npx wrangler deploy`. `.env` dan `.env.example` dipakai untuk server Docker/Bun; Workers membaca binding dari `wrangler.toml` dan variable/secret dari konfigurasi Cloudflare. Pengaturan database Workers dikunci dari UI.
+Sesudah mengubah binding, variable, atau secret, jalankan ulang `npx wrangler deploy`. `.env` dan `.env.example` dipakai untuk server Docker/Bun; Workers membaca binding dari `wrangler.toml` dan variable/secret dari konfigurasi Cloudflare. Endpoint pengaturan database hanya dapat diakses dengan sesi admin yang valid.
 
 #### 6. Perbarui deployment
 
