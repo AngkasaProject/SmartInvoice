@@ -34,6 +34,7 @@ import {
   uploadImage,
 } from "./server/storage.ts";
 import { hashPassword, verifyPassword } from "./src/utils/password.ts";
+import { defaultBusinessProfile } from "./src/services/storage.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -313,7 +314,8 @@ async function startServer() {
           .json({ success: false, message: "Invoice tidak ditemukan." });
       }
 
-      const business = await getSetting("business_profile", null);
+      const business =
+        (await getSetting("business_profile", null)) ?? defaultBusinessProfile;
 
       res.json({ success: true, invoice, business });
     } catch (err: any) {

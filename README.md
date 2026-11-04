@@ -215,7 +215,7 @@ npx wrangler r2 bucket create smartinvoice-assets
 
 Perintah D1 menampilkan `database_id`. Buka `wrangler.toml` dan ganti nilai contoh `REPLACE_WITH_D1_DATABASE_ID` dengan ID tersebut. Pastikan nama bucket R2 sama dengan `smartinvoice-assets` di konfigurasi. Jika resource sudah ada, gunakan database ID dan nama bucket yang sudah ada, jangan membuat duplikat.
 
-Konfigurasi `[assets]`, binding D1 `DB`, binding R2 `R2_BUCKET`, dan direktori migration sudah tersedia di `wrangler.toml`. D1 tetap menjadi registry konfigurasi dan penyimpan akun admin saat database aplikasi dialihkan. R2 hanya dipakai untuk gambar ketika D1 aktif; Neon dan Supabase memakai object storage masing-masing.
+Konfigurasi `[assets]` memakai fallback SPA agar URL langsung seperti `/print/<id>` memuat aplikasi, binding D1 `DB`, binding R2 `R2_BUCKET`, dan direktori migration sudah tersedia di `wrangler.toml`. D1 tetap menjadi registry konfigurasi dan penyimpan akun admin saat database aplikasi dialihkan. R2 hanya dipakai untuk gambar ketika D1 aktif; Neon dan Supabase memakai object storage masing-masing.
 
 #### 3. Terapkan skema D1
 

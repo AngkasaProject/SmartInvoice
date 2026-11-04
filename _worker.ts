@@ -13,6 +13,7 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import { hashPassword, verifyPassword } from "./src/utils/password";
+import { defaultBusinessProfile } from "./src/services/storage";
 
 interface D1Result<T = Record<string, unknown>> {
   results?: T[];
@@ -567,7 +568,9 @@ export default {
           );
         }
 
-        const business = await getSettingValue(env, "business_profile");
+        const business =
+          (await getSettingValue(env, "business_profile")) ??
+          defaultBusinessProfile;
 
         return new Response(
           JSON.stringify({
