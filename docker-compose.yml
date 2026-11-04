@@ -15,9 +15,11 @@ services:
       - PORT=3777
 
       # Konfigurasi Database (Opsional)
+      - DATABASE_DRIVER=${DATABASE_DRIVER}
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
       - SUPABASE_STORAGE_BUCKET=${SUPABASE_STORAGE_BUCKET}
+      - NEON_DATABASE_URL=${NEON_DATABASE_URL}
 
       # Konfigurasi WhatsApp (Opsional)
       - WHATSAPP_PROVIDER=${WHATSAPP_PROVIDER}

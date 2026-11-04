@@ -17,23 +17,19 @@ export const defaultDatabaseConfig: DatabaseConfig = {
   sqlite: {
     filePath: "./data/smartinvoice.db",
   },
-  mariadb: {
-    host: "localhost",
-    port: 3306,
-    user: "root",
-    password: "",
-    database: "smartinvoice",
-  },
+  d1: { binding: "DB" },
   supabase: {
     url: (import.meta as any).env?.VITE_SUPABASE_URL || "",
     anonKey: (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || "",
   },
+  neon: { configured: false },
 };
 
 // Interface untuk respons konfigurasi (menambahkan isEnvLocked)
 export interface DbConfigResponse {
   config: DatabaseConfig;
   isEnvLocked: boolean;
+  canMigrate: boolean;
 }
 
 // In-memory cache for ultra-fast UI rendering
@@ -94,6 +90,7 @@ export async function fetchDatabaseConfig(): Promise<DbConfigResponse> {
         return {
           config: data.config,
           isEnvLocked: data.isEnvLocked || false,
+          canMigrate: data.canMigrate || false,
         };
       }
     }
@@ -103,6 +100,7 @@ export async function fetchDatabaseConfig(): Promise<DbConfigResponse> {
   return {
     config: cachedDbConfig,
     isEnvLocked: false,
+    canMigrate: false,
   };
 }
 

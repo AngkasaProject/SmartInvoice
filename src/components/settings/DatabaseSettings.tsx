@@ -37,7 +37,7 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
     defaultDatabaseConfig,
   );
   const [isEnvLocked, setIsEnvLocked] = useState(false);
-  const [showMariaPassword, setShowMariaPassword] = useState(false);
+  const [canMigrate, setCanMigrate] = useState(false);
   const [showSupabaseKey, setShowSupabaseKey] = useState(false);
 
   // Test states
@@ -45,10 +45,14 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
     "idle" | "loading" | "success" | "error"
   >("idle");
   const [sqliteTestMsg, setSqliteTestMsg] = useState("");
-  const [mariaTestStatus, setMariaTestStatus] = useState<
+  const [d1TestStatus, setD1TestStatus] = useState<
     "idle" | "loading" | "success" | "error"
   >("idle");
-  const [mariaTestMsg, setMariaTestMsg] = useState("");
+  const [d1TestMsg, setD1TestMsg] = useState("");
+  const [neonTestStatus, setNeonTestStatus] = useState<
+    "idle" | "loading" | "success" | "error"
+  >("idle");
+  const [neonTestMsg, setNeonTestMsg] = useState("");
   const [supabaseTestStatus, setSupabaseTestStatus] = useState<
     "idle" | "loading" | "success" | "error"
   >("idle");
@@ -56,7 +60,7 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
 
   // Migration states
   const [migrateFrom, setMigrateFrom] = useState<DatabaseDriver>("sqlite");
-  const [migrateTo, setMigrateTo] = useState<DatabaseDriver>("mariadb");
+  const [migrateTo, setMigrateTo] = useState<DatabaseDriver>("neon");
   const [isMigrating, setIsMigrating] = useState(false);
   const [copiedSql, setCopiedSql] = useState(false);
 
@@ -64,6 +68,7 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
     fetchDatabaseConfig().then((res) => {
       setDbSettings(res.config);
       setIsEnvLocked(res.isEnvLocked);
+      setCanMigrate(res.canMigrate);
     });
   }, []);
 
@@ -71,6 +76,12 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
     e.preventDefault();
     if (isEnvLocked)
       return toast.error("Konfigurasi dikunci oleh Environment Variable.");
+    if (
+      dbSettings.activeDriver === "neon" &&
+      !dbSettings.neon.configured
+    ) {
+      return toast.error("Atur NEON_DATABASE_URL sebelum memilih Neon.");
+    }
 
     const res = await saveDatabaseConfig(dbSettings);
     if (res.success) {
@@ -92,12 +103,21 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
     res.success ? toast.success(res.message) : toast.error(res.message);
   };
 
-  const handleTestMariaDb = async () => {
-    setMariaTestStatus("loading");
-    setMariaTestMsg("");
-    const res = await testDatabaseConnection("mariadb", dbSettings.mariadb);
-    setMariaTestStatus(res.success ? "success" : "error");
-    setMariaTestMsg(res.message);
+  const handleTestD1 = async () => {
+    setD1TestStatus("loading");
+    setD1TestMsg("");
+    const res = await testDatabaseConnection("d1");
+    setD1TestStatus(res.success ? "success" : "error");
+    setD1TestMsg(res.message);
+    res.success ? toast.success(res.message) : toast.error(res.message);
+  };
+
+  const handleTestNeon = async () => {
+    setNeonTestStatus("loading");
+    setNeonTestMsg("");
+    const res = await testDatabaseConnection("neon");
+    setNeonTestStatus(res.success ? "success" : "error");
+    setNeonTestMsg(res.message);
     res.success ? toast.success(res.message) : toast.error(res.message);
   };
 
@@ -111,7 +131,7 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
   };
 
   const handleMigrate = async () => {
-    if (isEnvLocked) return toast.error("Migrasi dinonaktifkan di mode Cloud.");
+    if (!canMigrate) return toast.error("Migrasi tidak tersedia di runtime ini.");
     if (migrateFrom === migrateTo)
       return toast.error("Sumber dan tujuan tidak boleh sama.");
     setIsMigrating(true);
@@ -136,9 +156,8 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
               Konfigurasi Dikelola oleh Environment Variable
             </h3>
             <p className="text-xs text-blue-700 mt-1">
-              Aplikasi mendeteksi <code>SUPABASE_URL</code> di sistem.
-              Pengaturan database dikunci secara otomatis dan tidak dapat diubah
-              melalui UI ini.
+              Database dikonfigurasi lewat environment secret atau binding
+              deployment, sehingga pengaturannya dikunci dari UI.
             </p>
           </div>
         </div>
@@ -164,7 +183,7 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
       </div>
 
       <div
-        className={`grid grid-cols-1 sm:grid-cols-3 gap-4 ${isEnvLocked ? "opacity-50 pointer-events-none" : ""}`}
+        className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 ${isEnvLocked ? "opacity-50 pointer-events-none" : ""}`}
       >
         {/* SQLite Card */}
         <div
@@ -181,19 +200,19 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
             File lokal, zero-config.
           </p>
         </div>
-        {/* MariaDB Card */}
+        {/* Cloudflare D1 Card */}
         <div
           onClick={() =>
             !isEnvLocked &&
-            setDbSettings({ ...dbSettings, activeDriver: "mariadb" })
+            toast.info("D1 hanya tersedia di Cloudflare Workers melalui binding Wrangler.")
           }
-          className={`cursor-pointer p-4 rounded-xl border-2 transition ${dbSettings.activeDriver === "mariadb" ? "border-amber-600 bg-amber-50/40" : "border-slate-200 bg-white"}`}
+          className={`cursor-pointer p-4 rounded-xl border-2 transition ${dbSettings.activeDriver === "d1" ? "border-orange-600 bg-orange-50/40" : "border-slate-200 bg-white"}`}
         >
           <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
-            <Server className="w-4 h-4" /> MariaDB
+            <Cloud className="w-4 h-4" /> Cloudflare D1
           </div>
           <p className="text-[11px] text-slate-500 mt-1">
-            MySQL server lokal/remote.
+            SQLite terkelola untuk Workers.
           </p>
         </div>
         {/* Supabase Card */}
@@ -208,6 +227,21 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
             <Cloud className="w-4 h-4" /> Supabase
           </div>
           <p className="text-[11px] text-slate-500 mt-1">Cloud PostgreSQL.</p>
+        </div>
+        {/* Neon Card */}
+        <div
+          onClick={() =>
+            !isEnvLocked &&
+            setDbSettings({ ...dbSettings, activeDriver: "neon" })
+          }
+          className={`cursor-pointer p-4 rounded-xl border-2 transition ${dbSettings.activeDriver === "neon" ? "border-emerald-600 bg-emerald-50/40" : "border-slate-200 bg-white"}`}
+        >
+          <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
+            <Server className="w-4 h-4" /> Neon
+          </div>
+          <p className="text-[11px] text-slate-500 mt-1">
+            PostgreSQL serverless.
+          </p>
         </div>
       </div>
 
@@ -251,139 +285,6 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
               className={`p-3 rounded-xl text-xs ${sqliteTestStatus === "success" ? "bg-emerald-100 text-emerald-900" : "bg-rose-50 text-rose-900"}`}
             >
               {sqliteTestMsg}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* MariaDB Form */}
-      {dbSettings.activeDriver === "mariadb" && (
-        <div
-          className={`p-4 bg-amber-50/50 rounded-xl border border-amber-200 space-y-3 ${isEnvLocked ? "opacity-50 pointer-events-none" : ""}`}
-        >
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                Host
-              </label>
-              <input
-                type="text"
-                value={dbSettings.mariadb.host}
-                onChange={(e) =>
-                  setDbSettings({
-                    ...dbSettings,
-                    mariadb: { ...dbSettings.mariadb, host: e.target.value },
-                  })
-                }
-                className="w-full text-xs font-mono p-2.5 rounded-lg border border-slate-200"
-              />
-            </div>
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                Port
-              </label>
-              <input
-                type="number"
-                value={dbSettings.mariadb.port}
-                onChange={(e) =>
-                  setDbSettings({
-                    ...dbSettings,
-                    mariadb: {
-                      ...dbSettings.mariadb,
-                      port: Number(e.target.value),
-                    },
-                  })
-                }
-                className="w-full text-xs font-mono p-2.5 rounded-lg border border-slate-200"
-              />
-            </div>
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                Database
-              </label>
-              <input
-                type="text"
-                value={dbSettings.mariadb.database}
-                onChange={(e) =>
-                  setDbSettings({
-                    ...dbSettings,
-                    mariadb: {
-                      ...dbSettings.mariadb,
-                      database: e.target.value,
-                    },
-                  })
-                }
-                className="w-full text-xs font-mono p-2.5 rounded-lg border border-slate-200"
-              />
-            </div>
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                User
-              </label>
-              <input
-                type="text"
-                value={dbSettings.mariadb.user}
-                onChange={(e) =>
-                  setDbSettings({
-                    ...dbSettings,
-                    mariadb: { ...dbSettings.mariadb, user: e.target.value },
-                  })
-                }
-                className="w-full text-xs font-mono p-2.5 rounded-lg border border-slate-200"
-              />
-            </div>
-            <div className="sm:col-span-2">
-              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
-                Password
-              </label>
-              <div className="relative">
-                <input
-                  type={showMariaPassword ? "text" : "password"}
-                  value={dbSettings.mariadb.password || ""}
-                  onChange={(e) =>
-                    setDbSettings({
-                      ...dbSettings,
-                      mariadb: {
-                        ...dbSettings.mariadb,
-                        password: e.target.value,
-                      },
-                    })
-                  }
-                  className="w-full text-xs font-mono p-2.5 pr-9 rounded-lg border border-slate-200"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowMariaPassword(!showMariaPassword)}
-                  className="absolute right-2.5 top-2.5 text-slate-400"
-                >
-                  {showMariaPassword ? (
-                    <EyeOff className="w-4 h-4" />
-                  ) : (
-                    <Eye className="w-4 h-4" />
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-          <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={handleTestMariaDb}
-              className="px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-900 text-white flex items-center gap-2"
-            >
-              {mariaTestStatus === "loading" ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <RefreshCw className="w-3.5 h-3.5 text-amber-400" />
-              )}{" "}
-              Tes MariaDB
-            </button>
-          </div>
-          {mariaTestMsg && (
-            <div
-              className={`p-3 rounded-xl text-xs ${mariaTestStatus === "success" ? "bg-emerald-100 text-emerald-900" : "bg-rose-50 text-rose-900"}`}
-            >
-              {mariaTestMsg}
             </div>
           )}
         </div>
@@ -468,8 +369,69 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
         </div>
       )}
 
-      {/* Migration Tool (Disembunyikan di Cloud Mode) */}
-      {!isEnvLocked && (
+      {dbSettings.activeDriver === "d1" && (
+        <div className="p-4 bg-orange-50 rounded-xl border border-orange-200 text-xs text-orange-900 space-y-3">
+          <p>
+            D1 dikelola melalui binding <code>DB</code> di{" "}
+            <code>wrangler.toml</code>. Untuk upload logo dan QRIS, binding R2{" "}
+            <code>R2_BUCKET</code> juga harus dikonfigurasi.
+          </p>
+          <button
+            type="button"
+            onClick={handleTestD1}
+            className="px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-900 text-white flex items-center gap-2"
+          >
+            {d1TestStatus === "loading" ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="w-3.5 h-3.5 text-orange-400" />
+            )}{" "}
+            Tes D1
+          </button>
+          {d1TestMsg && (
+            <div
+              className={`p-3 rounded-xl text-xs ${d1TestStatus === "success" ? "bg-emerald-100 text-emerald-900" : "bg-rose-50 text-rose-900"}`}
+            >
+              {d1TestMsg}
+            </div>
+          )}
+        </div>
+      )}
+
+      {dbSettings.activeDriver === "neon" && (
+        <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200 space-y-3">
+          <p className="text-xs text-emerald-950">
+            Simpan connection string Neon sebagai secret <code>NEON_DATABASE_URL</code>{" "}
+            di environment server/Workers. Secret tidak disimpan atau dikirim
+            melalui UI.
+          </p>
+          <p className="text-xs text-emerald-800">
+            Status: {dbSettings.neon.configured ? "connection string terdeteksi" : "belum terdeteksi"}
+          </p>
+          <button
+            type="button"
+            onClick={handleTestNeon}
+            className="px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-900 text-white flex items-center gap-2"
+          >
+            {neonTestStatus === "loading" ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="w-3.5 h-3.5 text-emerald-400" />
+            )}{" "}
+            Tes Neon
+          </button>
+          {neonTestMsg && (
+            <div
+              className={`p-3 rounded-xl text-xs ${neonTestStatus === "success" ? "bg-emerald-100 text-emerald-900" : "bg-rose-50 text-rose-900"}`}
+            >
+              {neonTestMsg}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Migration Tool */}
+      {canMigrate && (
         <div className="p-5 bg-gradient-to-br from-indigo-50/50 to-blue-50/40 rounded-xl border border-indigo-100 space-y-4">
           <h3 className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
             <ArrowRightLeft className="w-4 h-4 text-indigo-600" /> Alat Migrasi
@@ -488,8 +450,8 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
                 className="w-full text-xs p-2.5 rounded-lg border border-slate-200"
               >
                 <option value="sqlite">SQLite</option>
-                <option value="mariadb">MariaDB</option>
                 <option value="supabase">Supabase</option>
+                <option value="neon">Neon</option>
               </select>
             </div>
             <div>
@@ -502,8 +464,8 @@ export const DatabaseSettings: React.FC<DatabaseSettingsProps> = ({
                 className="w-full text-xs p-2.5 rounded-lg border border-slate-200"
               >
                 <option value="sqlite">SQLite</option>
-                <option value="mariadb">MariaDB</option>
                 <option value="supabase">Supabase</option>
+                <option value="neon">Neon</option>
               </select>
             </div>
             <button

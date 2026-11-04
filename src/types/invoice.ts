@@ -173,15 +173,7 @@ export interface DashboardStats {
 // ==========================================
 // 10. KONFIGURASI DATABASE
 // ==========================================
-export type DatabaseDriver = "sqlite" | "mariadb" | "supabase";
-
-export interface MariaDbCredentials {
-  host: string;
-  port: number;
-  user: string;
-  password?: string;
-  database: string;
-}
+export type DatabaseDriver = "sqlite" | "d1" | "supabase" | "neon";
 
 export interface SupabaseCredentials {
   url: string;
@@ -193,6 +185,11 @@ export interface DatabaseConfig {
   sqlite: {
     filePath: string;
   };
-  mariadb: MariaDbCredentials;
+  d1: {
+    binding: string;
+  };
   supabase: SupabaseCredentials;
+  neon: {
+    configured: boolean;
+  };
 }

@@ -2,66 +2,92 @@ import fs from "fs";
 import path from "path";
 
 export interface DatabaseConfig {
-  activeDriver: "sqlite" | "mariadb" | "supabase";
+  activeDriver: "sqlite" | "d1" | "supabase" | "neon";
   sqlite: { filePath: string };
-  mariadb: {
-    host: string;
-    port: number;
-    user: string;
-    password?: string;
-    database: string;
-  };
+  d1: { binding: string };
   supabase: { url: string; anonKey: string };
+  neon: { configured: boolean };
 }
 
 const DATA_DIR = path.resolve(process.cwd(), "data");
 const CONFIG_PATH = path.join(DATA_DIR, "server-config.json");
 
 export function getDatabaseConfig(): DatabaseConfig {
-  // 1. PRIORITAS UTAMA: Environment Variables (Docker / Cloudflare)
-  if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
+  const requestedDriver = process.env.DATABASE_DRIVER;
+  if (
+    requestedDriver &&
+    requestedDriver !== "sqlite" &&
+    requestedDriver !== "neon" &&
+    requestedDriver !== "supabase"
+  ) {
+    throw new Error(
+      `DATABASE_DRIVER '${requestedDriver}' tidak didukung oleh server Bun.`,
+    );
+  }
+
+  if (
+    requestedDriver === "sqlite" ||
+    requestedDriver === "neon" ||
+    requestedDriver === "supabase"
+  ) {
     return {
-      activeDriver: "supabase",
-      sqlite: { filePath: "" },
-      mariadb: { host: "", port: 0, user: "", database: "" },
+      activeDriver: requestedDriver,
+      sqlite: { filePath: process.env.SQLITE_PATH || "./data/smartinvoice.db" },
+      d1: { binding: "" },
       supabase: {
-        url: process.env.SUPABASE_URL,
-        anonKey: process.env.SUPABASE_ANON_KEY,
+        url: process.env.SUPABASE_URL || "",
+        anonKey: process.env.SUPABASE_ANON_KEY || "",
       },
+      neon: { configured: Boolean(process.env.NEON_DATABASE_URL) },
     };
   }
 
-  // 2. PRIORITAS KEDUA: File JSON Lokal (Jika tidak ada env)
+  if (process.env.NEON_DATABASE_URL || process.env.SUPABASE_URL) {
+    const activeDriver =
+      requestedDriver === "neon" || requestedDriver === "supabase"
+        ? requestedDriver
+        : process.env.NEON_DATABASE_URL
+          ? "neon"
+          : "supabase";
+
+    return {
+      activeDriver,
+      sqlite: { filePath: "./data/smartinvoice.db" },
+      d1: { binding: "" },
+      supabase: {
+        url: process.env.SUPABASE_URL || "",
+        anonKey: process.env.SUPABASE_ANON_KEY || "",
+      },
+      neon: { configured: Boolean(process.env.NEON_DATABASE_URL) },
+    };
+  }
+
+  // File JSON lokal digunakan jika tidak ada driver ENV.
   try {
     if (fs.existsSync(CONFIG_PATH)) {
       const raw = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
+      // Older configurations selected MariaDB but actually fell back to SQLite.
+      const activeDriver =
+        raw.activeDriver === "mariadb" ? "sqlite" : raw.activeDriver;
       return {
-        activeDriver: raw.activeDriver || "sqlite",
+        activeDriver: activeDriver || "sqlite",
         sqlite: raw.sqlite || { filePath: "./data/smartinvoice.db" },
-        mariadb: raw.mariadb || {
-          host: "localhost",
-          port: 3306,
-          user: "root",
-          database: "smartinvoice",
-        },
+        d1: { binding: "" },
         supabase: raw.supabase || { url: "", anonKey: "" },
+        neon: { configured: Boolean(process.env.NEON_DATABASE_URL) },
       };
     }
   } catch (e) {
     console.warn("[config] Gagal membaca config lokal.");
   }
 
-  // 3. DEFAULT (SQLite)
+  // 2. DEFAULT (SQLite for Bun/Docker)
   return {
     activeDriver: "sqlite",
     sqlite: { filePath: "./data/smartinvoice.db" },
-    mariadb: {
-      host: "localhost",
-      port: 3306,
-      user: "root",
-      database: "smartinvoice",
-    },
+    d1: { binding: "" },
     supabase: { url: "", anonKey: "" },
+    neon: { configured: false },
   };
 }
 
@@ -69,7 +95,11 @@ export function saveDatabaseConfig(
   config: Partial<DatabaseConfig>,
 ): DatabaseConfig {
   // Jika di Cloud/Env mode, jangan simpan ke file (karena tidak permanen)
-  if (process.env.SUPABASE_URL) {
+  if (
+    process.env.DATABASE_DRIVER ||
+    process.env.SUPABASE_URL ||
+    process.env.NEON_DATABASE_URL
+  ) {
     console.warn(
       "[config] Mode Environment Variable aktif. Perubahan config diabaikan.",
     );

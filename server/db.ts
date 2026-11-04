@@ -1,9 +1,7 @@
 /**
  * server/db.ts – Server-side database adapter for SmartInvoice
  *
- * Supports two modes:
- *   1. "sqlite"  → SQLite asli via bun:sqlite (data/smartinvoice.db)
- *   2. "supabase" → Supabase Cloud via @supabase/supabase-js
+ * Supports SQLite, Supabase, and Neon. Cloudflare D1 is handled in _worker.ts.
  *
  * Configuration is loaded centrally from server/config.ts
  */
@@ -11,8 +9,9 @@
 import { Database } from "bun:sqlite";
 import fs from "fs";
 import path from "path";
+import { neon } from "@neondatabase/serverless";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
-import { getDatabaseConfig } from "./config";
+import { DatabaseConfig, getDatabaseConfig } from "./config";
 
 // ── Data directory ──────────────────────────────────────────────────
 const DATA_DIR = path.resolve(process.cwd(), "data");
@@ -119,6 +118,45 @@ function isSupabaseActive(): boolean {
     Boolean(cfg.supabase?.url) &&
     Boolean(cfg.supabase?.anonKey)
   );
+}
+
+function isNeonActive(): boolean {
+  return (
+    getDatabaseConfig().activeDriver === "neon" &&
+    Boolean(process.env.NEON_DATABASE_URL)
+  );
+}
+
+function assertSqliteActive(
+  driver: DatabaseConfig["activeDriver"] = getDatabaseConfig().activeDriver,
+): void {
+  if (driver === "sqlite") return;
+  if (driver === "d1") {
+    throw new Error("Cloudflare D1 hanya tersedia pada runtime Workers.");
+  }
+  if (driver === "neon" && !process.env.NEON_DATABASE_URL) {
+    throw new Error("NEON_DATABASE_URL belum dikonfigurasi.");
+  }
+  if (
+    driver === "supabase" &&
+    (!getDatabaseConfig().supabase.url || !getDatabaseConfig().supabase.anonKey)
+  ) {
+    throw new Error("URL dan Anon Key Supabase wajib dikonfigurasi.");
+  }
+  throw new Error(`Database driver '${driver}' tidak tersedia.`);
+}
+
+function getNeon() {
+  const connectionString = process.env.NEON_DATABASE_URL;
+  if (!connectionString) {
+    throw new Error("NEON_DATABASE_URL belum dikonfigurasi.");
+  }
+  return neon(connectionString);
+}
+
+function parseJsonValue<T>(value: unknown, fallback: T): T {
+  if (typeof value !== "string") return (value as T) ?? fallback;
+  return safeJsonParse(value, fallback);
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -256,6 +294,13 @@ export async function getAllInvoices(): Promise<any[]> {
       throw err;
     }
   }
+  if (isNeonActive()) {
+    const rows = await getNeon().query(
+      "SELECT * FROM invoices ORDER BY created_at DESC",
+    );
+    return rows.map(mapSupabaseInvoiceToApp);
+  }
+  assertSqliteActive();
   const rows = db
     .query("SELECT * FROM invoices ORDER BY created_at DESC")
     .all() as any[];
@@ -272,12 +317,24 @@ export async function getInvoiceById(id: string): Promise<any> {
     if (error && error.code !== "PGRST116") throw error;
     return data ? mapSupabaseInvoiceToApp(data) : null;
   }
+  if (isNeonActive()) {
+    const rows = await getNeon().query(
+      "SELECT * FROM invoices WHERE id = $1 LIMIT 1",
+      [id],
+    );
+    return rows[0] ? mapSupabaseInvoiceToApp(rows[0]) : null;
+  }
+  assertSqliteActive();
   const row = db.query("SELECT * FROM invoices WHERE id = ?").get(id) as any;
   return row ? mapSqliteRowToApp(row) : null;
 }
 
-export async function saveInvoice(invoice: any): Promise<void> {
-  if (isSupabaseActive()) {
+export async function saveInvoice(
+  invoice: any,
+  targetDriver: DatabaseConfig["activeDriver"] = getDatabaseConfig()
+    .activeDriver,
+): Promise<void> {
+  if (targetDriver === "supabase") {
     try {
       const row = mapAppInvoiceToSupabase(invoice);
       const { error } = await getSupabase()
@@ -291,6 +348,29 @@ export async function saveInvoice(invoice: any): Promise<void> {
     }
   }
 
+  if (targetDriver === "neon") {
+    const row = mapAppInvoiceToSupabase(invoice);
+    const columns = Object.keys(row);
+    const jsonColumns = new Set(["client_data", "items_data"]);
+    const values = columns.map((column) =>
+      jsonColumns.has(column) ? JSON.stringify(row[column]) : row[column],
+    );
+    const placeholders = columns.map((column, index) =>
+      jsonColumns.has(column) ? `$${index + 1}::jsonb` : `$${index + 1}`,
+    );
+    const updates = columns
+      .filter((column) => column !== "id")
+      .map((column) => `${column} = EXCLUDED.${column}`);
+    await getNeon().query(
+      `INSERT INTO invoices (${columns.join(", ")})
+       VALUES (${placeholders.join(", ")})
+       ON CONFLICT (id) DO UPDATE SET ${updates.join(", ")}`,
+      values,
+    );
+    return;
+  }
+
+  assertSqliteActive(targetDriver);
   db.run(
     `INSERT INTO invoices (
       id, invoice_number, issue_date, due_date, status,
@@ -393,6 +473,11 @@ export async function deleteInvoice(id: string): Promise<void> {
       throw err;
     }
   }
+  if (isNeonActive()) {
+    await getNeon().query("DELETE FROM invoices WHERE id = $1", [id]);
+    return;
+  }
+  assertSqliteActive();
   db.run("DELETE FROM invoices WHERE id = ?", [id]);
 }
 
@@ -418,6 +503,14 @@ export async function getSetting(
       throw err;
     }
   }
+  if (isNeonActive()) {
+    const rows = await getNeon().query(
+      "SELECT value FROM settings WHERE key = $1 LIMIT 1",
+      [key],
+    );
+    return rows[0] ? parseJsonValue(rows[0].value, defaultValue) : defaultValue;
+  }
+  assertSqliteActive();
   const row = db
     .query("SELECT value FROM settings WHERE key = ?")
     .get(key) as any;
@@ -425,8 +518,13 @@ export async function getSetting(
   return safeJsonParse(row.value, defaultValue);
 }
 
-export async function saveSetting(key: string, value: any): Promise<void> {
-  if (isSupabaseActive()) {
+export async function saveSetting(
+  key: string,
+  value: any,
+  targetDriver: DatabaseConfig["activeDriver"] = getDatabaseConfig()
+    .activeDriver,
+): Promise<void> {
+  if (targetDriver === "supabase") {
     try {
       const { error } = await getSupabase()
         .from("settings")
@@ -441,6 +539,18 @@ export async function saveSetting(key: string, value: any): Promise<void> {
       throw err;
     }
   }
+  if (targetDriver === "neon") {
+    await getNeon().query(
+      `INSERT INTO settings (key, value, updated_at)
+       VALUES ($1, $2::jsonb, $3)
+       ON CONFLICT (key) DO UPDATE SET
+         value = EXCLUDED.value,
+         updated_at = EXCLUDED.updated_at`,
+      [key, JSON.stringify(value ?? null), new Date().toISOString()],
+    );
+    return;
+  }
+  assertSqliteActive(targetDriver);
   db.run(
     `INSERT INTO settings (key, value, updated_at)
      VALUES (?, ?, ?)
@@ -462,6 +572,13 @@ export async function checkAdminExists(): Promise<boolean> {
       .select("*", { count: "exact", head: true });
     return (count || 0) > 0;
   }
+  if (isNeonActive()) {
+    const rows = await getNeon().query(
+      "SELECT COUNT(*)::int AS c FROM users",
+    );
+    return Number(rows[0]?.c || 0) > 0;
+  }
+  assertSqliteActive();
   const row = db.query("SELECT COUNT(*) as c FROM users").get() as {
     c: number;
   };
@@ -474,6 +591,21 @@ export async function createAdminUser(user: any): Promise<void> {
     if (error) throw error;
     return;
   }
+  if (isNeonActive()) {
+    await getNeon().query(
+      `INSERT INTO users (id, username, password_hash, role, created_at)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        user.id,
+        user.username,
+        user.password_hash,
+        user.role ?? "admin",
+        user.created_at ?? new Date().toISOString(),
+      ],
+    );
+    return;
+  }
+  assertSqliteActive();
   db.run(
     `INSERT INTO users (id, username, password_hash, role, created_at)
      VALUES (?, ?, ?, ?, ?)`,
@@ -496,6 +628,14 @@ export async function getAdminUser(username: string): Promise<any> {
       .single();
     return data;
   }
+  if (isNeonActive()) {
+    const rows = await getNeon().query(
+      "SELECT * FROM users WHERE username = $1 LIMIT 1",
+      [username],
+    );
+    return rows[0] ?? null;
+  }
+  assertSqliteActive();
   return (
     db.query("SELECT * FROM users WHERE username = ?").get(username) ?? null
   );
@@ -586,9 +726,33 @@ export async function testConnection(
     }
   }
 
+  if (driver === "neon") {
+    if (!process.env.NEON_DATABASE_URL) {
+      return {
+        success: false,
+        message: "NEON_DATABASE_URL belum dikonfigurasi sebagai secret ENV.",
+        latencyMs: Date.now() - start,
+      };
+    }
+    try {
+      await getNeon().query("SELECT 1 AS connected");
+      return {
+        success: true,
+        message: `Berhasil terhubung ke Neon (${Date.now() - start}ms).`,
+        latencyMs: Date.now() - start,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        message: `Gagal terhubung ke Neon: ${err.message}`,
+        latencyMs: Date.now() - start,
+      };
+    }
+  }
+
   return {
     success: false,
-    message: "Driver MariaDB belum diimplementasikan di server ini.",
+    message: `Driver '${driver}' tidak tersedia di server Bun.`,
     latencyMs: Date.now() - start,
   };
 }
@@ -605,69 +769,116 @@ export async function migrateDataBetweenDrivers(
     };
   }
 
-  try {
-    if (fromDriver === "sqlite" && toDriver === "supabase") {
-      const sb = getSupabase();
-      const rows = db.query("SELECT * FROM invoices").all() as any[];
-      const settingsRows = db.query("SELECT * FROM settings").all() as any[];
-
-      let count = 0;
-      for (const row of rows) {
-        const appInv = mapSqliteRowToApp(row);
-        const sbRow = mapAppInvoiceToSupabase(appInv);
-        const { error } = await sb
-          .from("invoices")
-          .upsert(sbRow, { onConflict: "id" });
-        if (!error) count++;
-      }
-      for (const s of settingsRows) {
-        await sb.from("settings").upsert(
-          {
-            key: s.key,
-            value: safeJsonParse(s.value, null),
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "key" },
-        );
-        count++;
-      }
-      return {
-        success: true,
-        count,
-        message: `Berhasil migrasi ${count} item ke Supabase.`,
-      };
-    }
-
-    if (fromDriver === "supabase" && toDriver === "sqlite") {
-      const sb = getSupabase();
-      let count = 0;
-
-      const { data: rows } = await sb.from("invoices").select("*");
-      if (rows) {
-        for (const r of rows) {
-          const appInv = mapSupabaseInvoiceToApp(r);
-          await saveInvoice(appInv);
-          count++;
-        }
-      }
-      const { data: settingsRows } = await sb.from("settings").select("*");
-      if (settingsRows) {
-        for (const s of settingsRows) {
-          await saveSetting(s.key, s.value);
-          count++;
-        }
-      }
-      return {
-        success: true,
-        count,
-        message: `Berhasil migrasi ${count} item ke SQLite.`,
-      };
-    }
-
+  const supportedDrivers = new Set(["sqlite", "supabase", "neon"]);
+  if (!supportedDrivers.has(fromDriver) || !supportedDrivers.has(toDriver)) {
     return {
       success: false,
       count: 0,
-      message: `Migrasi dari ${fromDriver} ke ${toDriver} belum didukung.`,
+      message: "Migrasi hanya tersedia untuk SQLite, Supabase, dan Neon pada server Bun.",
+    };
+  }
+
+  try {
+    let invoices: any[];
+    let settings: any[];
+    let users: any[];
+
+    if (fromDriver === "sqlite") {
+      invoices = (db.query("SELECT * FROM invoices").all() as any[]).map(
+        mapSqliteRowToApp,
+      );
+      settings = (db.query("SELECT * FROM settings").all() as any[]).map(
+        (row) => ({
+          key: row.key,
+          value: safeJsonParse(row.value, null),
+        }),
+      );
+      users = db.query("SELECT * FROM users").all() as any[];
+    } else if (fromDriver === "supabase") {
+      const sb = getSupabase();
+      const [invoiceResult, settingResult, userResult] = await Promise.all([
+        sb.from("invoices").select("*"),
+        sb.from("settings").select("*"),
+        sb.from("users").select("*"),
+      ]);
+      if (invoiceResult.error) throw invoiceResult.error;
+      if (settingResult.error) throw settingResult.error;
+      if (userResult.error) throw userResult.error;
+      invoices = (invoiceResult.data || []).map(mapSupabaseInvoiceToApp);
+      settings = settingResult.data || [];
+      users = userResult.data || [];
+    } else {
+      const [invoiceRows, settingRows, userRows] = await Promise.all([
+        getNeon().query("SELECT * FROM invoices"),
+        getNeon().query("SELECT * FROM settings"),
+        getNeon().query("SELECT * FROM users"),
+      ]);
+      invoices = invoiceRows.map(mapSupabaseInvoiceToApp);
+      settings = settingRows.map((row: any) => ({
+        key: row.key,
+        value: parseJsonValue(row.value, null),
+      }));
+      users = userRows;
+    }
+
+    for (const invoice of invoices) {
+      await saveInvoice(invoice, toDriver as DatabaseConfig["activeDriver"]);
+    }
+    for (const setting of settings) {
+      await saveSetting(
+        setting.key,
+        setting.value,
+        toDriver as DatabaseConfig["activeDriver"],
+      );
+    }
+    for (const user of users) {
+      if (toDriver === "sqlite") {
+        db.run(
+          `INSERT INTO users (id, username, password_hash, role, created_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             username = excluded.username,
+             password_hash = excluded.password_hash,
+             role = excluded.role,
+             created_at = excluded.created_at`,
+          [
+            user.id,
+            user.username,
+            user.password_hash,
+            user.role ?? "admin",
+            user.created_at ?? new Date().toISOString(),
+          ],
+        );
+      } else if (toDriver === "supabase") {
+        const { error } = await getSupabase()
+          .from("users")
+          .upsert(user, { onConflict: "id" });
+        if (error) throw error;
+      } else {
+        await getNeon().query(
+          `INSERT INTO users (id, username, password_hash, role, created_at)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (id) DO UPDATE SET
+             username = EXCLUDED.username,
+             password_hash = EXCLUDED.password_hash,
+             role = EXCLUDED.role,
+             created_at = EXCLUDED.created_at`,
+          [
+            user.id,
+            user.username,
+            user.password_hash,
+            user.role ?? "admin",
+            user.created_at ?? new Date().toISOString(),
+          ],
+        );
+      }
+    }
+
+    const count = invoices.length + settings.length + users.length;
+    return {
+      success: true,
+      count,
+      message: `Berhasil migrasi ${count} data dari ${fromDriver} ke ${toDriver}.`,
     };
   } catch (err: any) {
     return {

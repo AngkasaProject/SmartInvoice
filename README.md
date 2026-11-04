@@ -1,6 +1,6 @@
 # 🧾 SmartInvoice - Aplikasi Invoice Profesional & WhatsApp Gateway
 
-Aplikasi pembuatan, pengeditan, dan pemantauan invoice lengkap dengan fitur cetak/unduh PDF, **Kwitansi Resmi Lunas**, pengiriman otomatis berkas PDF ke customer via **WhatsApp Gateway (OpenWA & Fonnte)**, dukungan **Multi-Database (SQLite, Supabase, LocalStorage)**, serta integrasi Webhook pesanan toko online.
+Aplikasi pembuatan, pengeditan, dan pemantauan invoice lengkap dengan fitur cetak/unduh PDF, **Kwitansi Resmi Lunas**, pengiriman otomatis berkas PDF ke customer via **WhatsApp Gateway (OpenWA & Fonnte)**, dukungan **SQLite, Cloudflare D1, Supabase, dan Neon**, serta integrasi Webhook pesanan toko online.
 
 Didesain agar bisa berjalan di **Docker (Self-Hosted)** maupun **Cloudflare Workers (Cloud)**.
 
@@ -12,11 +12,12 @@ Didesain agar bisa berjalan di **Docker (Self-Hosted)** maupun **Cloudflare Work
 2. [Prasyarat Sistem](#-prasyarat-sistem)
 3. [Instalasi Mode Development (Lokal)](#-instalasi-mode-development-lokal)
 4. [Setup Supabase (Database & Storage)](#-setup-supabase-database--storage)
-5. [Deployment via Docker (Self-Hosted)](#-deployment-via-docker-self-hosted)
-6. [Deployment via Cloudflare Workers (Cloud)](#-deployment-via-cloudflare-workers-cloud)
-7. [Panduan Integrasi WhatsApp Gateway](#-panduan-integrasi-whatsapp-gateway)
-8. [Integrasi API Toko Online (Webhook)](#-integrasi-api-toko-online-webhook)
-9. [Lisensi](#-lisensi)
+5. [Setup Neon PostgreSQL](#setup-neon-postgresql)
+6. [Deployment via Docker (Self-Hosted)](#-deployment-via-docker-self-hosted)
+7. [Deployment via Cloudflare Workers (Cloud)](#-deployment-via-cloudflare-workers-cloud)
+8. [Panduan Integrasi WhatsApp Gateway](#-panduan-integrasi-whatsapp-gateway)
+9. [Integrasi API Toko Online (Webhook)](#-integrasi-api-toko-online-webhook)
+10. [Lisensi](#-lisensi)
 
 ---
 
@@ -32,8 +33,10 @@ Didesain agar bisa berjalan di **Docker (Self-Hosted)** maupun **Cloudflare Work
 - **Dual WhatsApp Gateway**:
   - **OpenWA (Self-Hosted)**: Kompatibel dengan API OpenWA REST (UUID session, API key, pengiriman PDF base64).
   - **Fonnte (Cloud)**: Cukup masukkan Device Token Fonnte.
-- **Penyimpanan Gambar**: Logo dan QRIS disimpan di Supabase Storage (Cloud) atau Local Disk (Docker).
-- **Hybrid & Fallback Storage**: Konfigurasi sensitif bisa dikunci via Environment Variables (`.env`). Jika database mati, data otomatis disimpan ke `localStorage` browser (Mode Anonim).
+- **Penyimpanan Gambar**: Logo dan QRIS disimpan di R2 (Workers), Supabase Storage, atau Local Disk (Docker).
+- **Pilihan Database per Runtime**: Docker memakai SQLite secara default; Cloudflare Workers memakai D1; Supabase dan Neon tersedia sebagai database pihak ketiga.
+- **Penyimpanan Gambar Cloud**: Workers menggunakan Cloudflare R2 untuk logo dan QRIS; Docker dapat menyimpan file di disk lokal.
+- **Hybrid & Fallback Storage**: Konfigurasi sensitif bisa dikunci via Environment Variables (`.env`). Jika server tidak tersedia, aplikasi dapat memakai `localStorage` browser.
 - **Integrasi API Toko Online**: Endpoint Webhook untuk menerima pesanan dari WooCommerce, Shopify, atau custom store.
 
 ---
@@ -42,8 +45,9 @@ Didesain agar bisa berjalan di **Docker (Self-Hosted)** maupun **Cloudflare Work
 
 1. **Bun** versi 1.0+ (Sangat Direkomendasikan) atau **Node.js** versi 18+.
 2. (Opsional) Server **OpenWA** aktif atau akun **Fonnte**.
-3. (Opsional) Akun **Supabase** (untuk database cloud & storage).
-4. (Opsional) **Docker** & **Docker Compose** (untuk deployment self-hosted).
+3. (Opsional) Akun **Cloudflare** untuk Workers, D1, dan R2.
+4. (Opsional) Akun **Supabase** atau **Neon** untuk database PostgreSQL.
+5. (Opsional) **Docker** & **Docker Compose** (untuk deployment self-hosted).
 
 ---
 
@@ -172,29 +176,41 @@ docker compose up -d --build
 
 3. Aplikasi akan berjalan di http://localhost:3777 (atau sesuai port yang Anda atur di docker-compose.yml).
 
-4. Data SQLite dan file upload lokal akan tersimpan di folder ./data (di-mount sebagai volume).
+4. SQLite adalah database default. Data SQLite dan file upload lokal tersimpan di folder `./data` (di-mount sebagai volume).
+5. Untuk memakai Neon, atur `NEON_DATABASE_URL` di `.env` (opsional `DATABASE_DRIVER=neon`). Connection string Neon tidak disimpan di UI. Supabase dapat dikonfigurasi melalui UI atau environment variables.
 
-5. Setup Admin Pertama
+6. Setup Admin Pertama
    Saat pertama kali dibuka, aplikasi akan meminta Anda membuat Akun Admin (Username & Password). Simpan kredensial ini untuk login.
+
+### Setup Neon PostgreSQL
+
+Neon dapat digunakan dari Docker maupun Workers. Atur `NEON_DATABASE_URL` sebagai environment secret; pada Workers, tambahkan `DATABASE_DRIVER=neon` agar Neon dipilih alih-alih D1. Jalankan SQL dari [`migrations/neon/0001_init.sql`](./migrations/neon/0001_init.sql) di SQL Editor Neon sebelum menjalankan aplikasi.
 
 ### ☁️ Deployment via Cloudflare Workers (Cloud)
 
 Aplikasi ini sudah dilengkapi \_worker.ts untuk berjalan di edge Cloudflare.
 
-Pastikan Anda memiliki akun Cloudflare dan sudah login via Wrangler (npx wrangler login).
+Pastikan Anda memiliki akun Cloudflare dan sudah login via Wrangler (`npx wrangler login`).
 
-Atur Environment Variables di Cloudflare Dashboard > Workers > Settings > Variables and Secrets. Wajib diisi:
+1. Buat D1 dan R2, lalu hubungkan D1 ID yang ditampilkan Wrangler ke `database_id` di `wrangler.toml`:
 
-SUPABASE_URL
+   ```bash
+   npx wrangler d1 create smartinvoice
+   npx wrangler r2 bucket create smartinvoice-assets
+   ```
 
-SUPABASE_ANON_KEY
+2. Terapkan skema D1 dari [`migrations/d1/0001_init.sql`](./migrations/d1/0001_init.sql) dan deploy:
 
-Deploy:
+   ```bash
+   npx wrangler d1 migrations apply smartinvoice --remote
+   bun run build
+   npx wrangler deploy
+   ```
 
-bash
-bun run build
-npx wrangler deploy
-(Catatan: Di Cloudflare Workers, konfigurasi Database dan WhatsApp akan otomatis terkunci karena dibaca dari Environment Variables).
+3. D1 (`DB`) adalah database default Workers dan R2 (`R2_BUCKET`) dipakai untuk upload logo/QRIS. R2 bucket dibutuhkan untuk upload gambar ketika memakai D1.
+4. Untuk memakai Neon, tambahkan secret `NEON_DATABASE_URL` dan variable `DATABASE_DRIVER=neon`. Untuk Supabase, atur `DATABASE_DRIVER=supabase`, `SUPABASE_URL`, dan `SUPABASE_ANON_KEY`. Jalankan [`migrations/neon/0001_init.sql`](./migrations/neon/0001_init.sql) terlebih dahulu jika memakai Neon.
+
+Konfigurasi Workers dikelola melalui Wrangler dan Secrets sehingga terkunci dari UI. Jika menggunakan Neon atau Supabase sebagai database, R2 tetap digunakan oleh Worker untuk file upload.
 
 ### 📱 Panduan Integrasi WhatsApp Gateway
 

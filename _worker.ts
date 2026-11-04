@@ -1,15 +1,55 @@
 /**
  * Cloudflare Workers Edge Entry Point
- * Terintegrasi dengan Supabase, mendukung ENV Lock & Auth
+ * Database D1/Neon/Supabase and R2-backed image storage.
  */
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { neon } from "@neondatabase/serverless";
+import { hashPassword, verifyPassword } from "./src/utils/password";
+
+interface D1Result<T = Record<string, unknown>> {
+  results?: T[];
+  success: boolean;
+  error?: string;
+}
+
+interface D1Statement {
+  bind(...values: unknown[]): D1Statement;
+  all<T = Record<string, unknown>>(): Promise<D1Result<T>>;
+  first<T = Record<string, unknown>>(): Promise<T | null>;
+  run(): Promise<D1Result>;
+}
+
+interface D1Database {
+  prepare(query: string): D1Statement;
+}
+
+interface R2Object {
+  body: ReadableStream;
+  httpMetadata?: { contentType?: string };
+  writeHttpMetadata(headers: Headers): void;
+}
+
+interface R2Bucket {
+  get(key: string): Promise<R2Object | null>;
+  put(
+    key: string,
+    value: ArrayBuffer | ArrayBufferView | ReadableStream,
+    options?: { httpMetadata?: { contentType?: string } },
+  ): Promise<unknown>;
+  delete(key: string): Promise<void>;
+}
 
 interface Env {
   ASSETS?: { fetch: (request: Request) => Promise<Response> };
+  DB?: D1Database;
+  R2_BUCKET?: R2Bucket;
   ENVIRONMENT?: string;
-  SUPABASE_URL: string;
-  SUPABASE_ANON_KEY: string;
+  DATABASE_DRIVER?: string;
+  NEON_DATABASE_URL?: string;
+  SUPABASE_URL?: string;
+  SUPABASE_ANON_KEY?: string;
+  SUPABASE_STORAGE_BUCKET?: string;
   WHATSAPP_PROVIDER?: string;
   OPENWA_SERVER_URL?: string;
   OPENWA_API_KEY?: string;
@@ -27,6 +67,206 @@ function getSupabase(env: Env): SupabaseClient {
   return _supabase;
 }
 
+type WorkerDatabaseDriver = "d1" | "supabase" | "neon";
+
+function getDatabaseDriver(env: Env): WorkerDatabaseDriver {
+  const requested = env.DATABASE_DRIVER?.toLowerCase();
+  if (requested) {
+    if (requested === "d1" || requested === "supabase" || requested === "neon") {
+      return requested;
+    }
+    throw new Error(
+      `DATABASE_DRIVER '${requested}' tidak didukung oleh Cloudflare Workers.`,
+    );
+  }
+  if (env.DB) return "d1";
+  if (env.NEON_DATABASE_URL) return "neon";
+  if (env.SUPABASE_URL && env.SUPABASE_ANON_KEY) return "supabase";
+  return "d1";
+}
+
+function isDatabaseConfigured(env: Env): boolean {
+  switch (getDatabaseDriver(env)) {
+    case "d1":
+      return Boolean(env.DB);
+    case "neon":
+      return Boolean(env.NEON_DATABASE_URL);
+    case "supabase":
+      return Boolean(env.SUPABASE_URL && env.SUPABASE_ANON_KEY);
+  }
+}
+
+function requireDatabase(env: Env): WorkerDatabaseDriver {
+  const driver = getDatabaseDriver(env);
+  if (!isDatabaseConfigured(env)) {
+    throw new Error(
+      driver === "d1"
+        ? "Binding D1 'DB' belum dikonfigurasi di Wrangler."
+        : driver === "neon"
+          ? "NEON_DATABASE_URL belum dikonfigurasi."
+          : "SUPABASE_URL dan SUPABASE_ANON_KEY belum dikonfigurasi.",
+    );
+  }
+  return driver;
+}
+
+function getNeon(env: Env) {
+  if (!env.NEON_DATABASE_URL) {
+    throw new Error("NEON_DATABASE_URL belum dikonfigurasi.");
+  }
+  return neon(env.NEON_DATABASE_URL);
+}
+
+function toPostgresPlaceholders(query: string): string {
+  let index = 0;
+  return query.replace(/\?/g, () => `$${++index}`);
+}
+
+async function queryRows<T extends Record<string, any>>(
+  env: Env,
+  query: string,
+  values: unknown[] = [],
+): Promise<T[]> {
+  const driver = requireDatabase(env);
+  if (driver === "d1") {
+    const result = await env.DB!.prepare(query).bind(...values).all<T>();
+    if (!result.success) throw new Error(result.error || "Query D1 gagal.");
+    return result.results || [];
+  }
+  if (driver === "neon") {
+    return (await getNeon(env).query(
+      toPostgresPlaceholders(query),
+      values,
+    )) as T[];
+  }
+  throw new Error("Query SQL hanya dapat digunakan dengan D1 atau Neon.");
+}
+
+async function queryFirst<T extends Record<string, any>>(
+  env: Env,
+  query: string,
+  values: unknown[] = [],
+): Promise<T | null> {
+  const driver = requireDatabase(env);
+  if (driver === "d1") {
+    return env.DB!.prepare(query).bind(...values).first<T>();
+  }
+  if (driver === "neon") {
+    const rows = await queryRows<T>(env, query, values);
+    return rows[0] || null;
+  }
+  throw new Error("Query SQL hanya dapat digunakan dengan D1 atau Neon.");
+}
+
+async function executeQuery(
+  env: Env,
+  query: string,
+  values: unknown[] = [],
+): Promise<void> {
+  const driver = requireDatabase(env);
+  if (driver === "d1") {
+    const result = await env.DB!.prepare(query).bind(...values).run();
+    if (!result.success) throw new Error(result.error || "Query D1 gagal.");
+    return;
+  }
+  if (driver === "neon") {
+    await getNeon(env).query(toPostgresPlaceholders(query), values);
+    return;
+  }
+  throw new Error("Query SQL hanya dapat digunakan dengan D1 atau Neon.");
+}
+
+function parseJson(value: unknown, fallback: unknown): unknown {
+  if (typeof value !== "string") return value ?? fallback;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
+function mapInvoiceRow(row: Record<string, any>) {
+  return {
+    id: row.id,
+    invoiceNumber: row.invoice_number,
+    issueDate: row.issue_date,
+    dueDate: row.due_date,
+    status: row.status,
+    client: parseJson(row.client_data, {}),
+    items: parseJson(row.items_data, []),
+    subtotal: Number(row.subtotal) || 0,
+    discountType: row.discount_type || "fixed",
+    discountValue: Number(row.discount_value) || 0,
+    discountAmount: Number(row.discount_amount) || 0,
+    taxRate: Number(row.tax_rate) || 0,
+    taxAmount: Number(row.tax_amount) || 0,
+    shippingFee: Number(row.shipping_fee) || 0,
+    total: Number(row.total) || 0,
+    notes: row.notes,
+    terms: row.terms,
+    paymentInstructions: row.payment_instructions,
+    paymentMethod: row.payment_method,
+    paymentAccountNumber: row.payment_account_number,
+    downPayment: Number(row.down_payment) || 0,
+    remainingBalance: Number(row.remaining_balance) || 0,
+    paidAt: row.paid_at,
+    paidMethod: row.paid_method,
+    whatsappStatus: row.whatsapp_status,
+    whatsappSentAt: row.whatsapp_sent_at,
+    whatsappRecipient: row.whatsapp_recipient,
+    whatsappLastLog: row.whatsapp_last_log,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+async function getInvoiceRow(env: Env, id: string) {
+  const driver = requireDatabase(env);
+  if (driver === "supabase") {
+    const { data, error } = await getSupabase(env)
+      .from("invoices")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  }
+  return queryFirst(env, "SELECT * FROM invoices WHERE id = ?", [id]);
+}
+
+async function getSettingValue(env: Env, key: string) {
+  const driver = requireDatabase(env);
+  if (driver === "supabase") {
+    const { data, error } = await getSupabase(env)
+      .from("settings")
+      .select("value")
+      .eq("key", key)
+      .maybeSingle();
+    if (error) throw error;
+    return data?.value ?? null;
+  }
+  const row = await queryFirst<{ value: unknown }>(
+    env,
+    "SELECT value FROM settings WHERE key = ?",
+    [key],
+  );
+  return row ? parseJson(row.value, null) : null;
+}
+
+async function getUserByUsername(env: Env, username: string) {
+  const driver = requireDatabase(env);
+  if (driver === "supabase") {
+    const { data, error } = await getSupabase(env)
+      .from("users")
+      .select("*")
+      .eq("username", username)
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  }
+  return queryFirst(env, "SELECT * FROM users WHERE username = ?", [username]);
+}
+
 function getWhatsAppEnvConfig(env: Env) {
   if (!env.WHATSAPP_PROVIDER) return null;
   return {
@@ -40,13 +280,6 @@ function getWhatsAppEnvConfig(env: Env) {
     autoSendCaption: "",
     directWhatsappFallback: true,
   };
-}
-
-async function hashPassword(password: string): Promise<string> {
-  const msgBuffer = new TextEncoder().encode(password);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", msgBuffer);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 export default {
@@ -64,7 +297,8 @@ export default {
     }
 
     try {
-      const hasSupabase = Boolean(env.SUPABASE_URL && env.SUPABASE_ANON_KEY);
+      const activeDriver = getDatabaseDriver(env);
+      const hasDatabase = isDatabaseConfigured(env);
 
       // ==========================================
       // 1. ENDPOINT PUBLIK (Untuk Link Print)
@@ -75,25 +309,7 @@ export default {
       ) {
         const id = url.pathname.replace("/api/public/invoice/", "");
 
-        if (!hasSupabase) {
-          return new Response(
-            JSON.stringify({
-              success: false,
-              message: "Mode anonim tidak mendukung link publik.",
-            }),
-            {
-              status: 400,
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-            },
-          );
-        }
-
-        const supabase = getSupabase(env);
-        const { data: invRow } = await supabase
-          .from("invoices")
-          .select("*")
-          .eq("id", id)
-          .single();
+        const invRow = await getInvoiceRow(env, id);
 
         if (!invRow) {
           return new Response(
@@ -108,50 +324,13 @@ export default {
           );
         }
 
-        const { data: bizRow } = await supabase
-          .from("settings")
-          .select("value")
-          .eq("key", "business_profile")
-          .single();
-
-        const mappedInvoice = {
-          id: invRow.id,
-          invoiceNumber: invRow.invoice_number,
-          issueDate: invRow.issue_date,
-          dueDate: invRow.due_date,
-          status: invRow.status,
-          client: invRow.client_data,
-          items: invRow.items_data,
-          subtotal: parseFloat(invRow.subtotal) || 0,
-          discountType: invRow.discount_type,
-          discountValue: parseFloat(invRow.discount_value) || 0,
-          discountAmount: parseFloat(invRow.discount_amount) || 0,
-          taxRate: parseFloat(invRow.tax_rate) || 0,
-          taxAmount: parseFloat(invRow.tax_amount) || 0,
-          shippingFee: parseFloat(invRow.shipping_fee) || 0,
-          total: parseFloat(invRow.total) || 0,
-          notes: invRow.notes,
-          terms: invRow.terms,
-          paymentInstructions: invRow.payment_instructions,
-          paymentMethod: invRow.payment_method,
-          paymentAccountNumber: invRow.payment_account_number,
-          downPayment: parseFloat(invRow.down_payment) || 0,
-          remainingBalance: parseFloat(invRow.remaining_balance) || 0,
-          paidAt: invRow.paid_at,
-          paidMethod: invRow.paid_method,
-          whatsappStatus: invRow.whatsapp_status,
-          whatsappSentAt: invRow.whatsapp_sent_at,
-          whatsappRecipient: invRow.whatsapp_recipient,
-          whatsappLastLog: invRow.whatsapp_last_log,
-          createdAt: invRow.created_at,
-          updatedAt: invRow.updated_at,
-        };
+        const business = await getSettingValue(env, "business_profile");
 
         return new Response(
           JSON.stringify({
             success: true,
-            invoice: mappedInvoice,
-            business: bizRow?.value,
+            invoice: mapInvoiceRow(invRow),
+            business,
           }),
           {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -163,49 +342,36 @@ export default {
       // 2. ENDPOINT AUTH
       // ==========================================
       if (url.pathname === "/api/auth/status" && request.method === "GET") {
-        if (!hasSupabase) {
-          return new Response(
-            JSON.stringify({
-              success: true,
-              hasAdmin: false,
-              isAnonymous: true,
-            }),
-            {
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-            },
-          );
-        }
-        try {
-          const supabase = getSupabase(env);
-          const { count } = await supabase
+        requireDatabase(env);
+        let count = 0;
+        if (activeDriver === "supabase") {
+          const { count: userCount, error } = await getSupabase(env)
             .from("users")
             .select("*", { count: "exact", head: true });
-          const hasAdmin = (count || 0) > 0;
-          return new Response(
-            JSON.stringify({ success: true, hasAdmin, isAnonymous: false }),
-            {
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-            },
+          if (error) throw error;
+          count = userCount || 0;
+        } else {
+          const row = await queryFirst<{ c: number }>(
+            env,
+            "SELECT COUNT(*) AS c FROM users",
           );
-        } catch (err: any) {
-          return new Response(
-            JSON.stringify({
-              success: true,
-              hasAdmin: false,
-              isAnonymous: true,
-              error: err.message,
-            }),
-            {
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-            },
-          );
+          count = Number(row?.c) || 0;
         }
+        return new Response(
+          JSON.stringify({
+            success: true,
+            hasAdmin: count > 0,
+            isAnonymous: false,
+            activeDriver,
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
       }
 
       if (
         (url.pathname === "/api/auth/setup" ||
           url.pathname === "/api/auth/login") &&
-        !hasSupabase
+        !hasDatabase
       ) {
         return new Response(
           JSON.stringify({
@@ -220,11 +386,22 @@ export default {
       }
 
       if (url.pathname === "/api/auth/setup" && request.method === "POST") {
-        const supabase = getSupabase(env);
-        const { count } = await supabase
-          .from("users")
-          .select("*", { count: "exact", head: true });
-        if ((count || 0) > 0) {
+        requireDatabase(env);
+        let hasAdmin = false;
+        if (activeDriver === "supabase") {
+          const { count, error } = await getSupabase(env)
+            .from("users")
+            .select("*", { count: "exact", head: true });
+          if (error) throw error;
+          hasAdmin = (count || 0) > 0;
+        } else {
+          const row = await queryFirst<{ c: number }>(
+            env,
+            "SELECT COUNT(*) AS c FROM users",
+          );
+          hasAdmin = Number(row?.c) > 0;
+        }
+        if (hasAdmin) {
           return new Response(
             JSON.stringify({ success: false, message: "Admin sudah ada." }),
             {
@@ -241,8 +418,26 @@ export default {
           password_hash: passwordHash,
           role: "admin",
         };
-        const { error } = await supabase.from("users").insert(newUser);
-        if (error) throw error;
+        if (activeDriver === "supabase") {
+          const { error } = await getSupabase(env).from("users").insert({
+            ...newUser,
+            created_at: new Date().toISOString(),
+          });
+          if (error) throw error;
+        } else {
+          await executeQuery(
+            env,
+            `INSERT INTO users (id, username, password_hash, role, created_at)
+             VALUES (?, ?, ?, ?, ?)`,
+            [
+              newUser.id,
+              newUser.username,
+              newUser.password_hash,
+              newUser.role,
+              new Date().toISOString(),
+            ],
+          );
+        }
         return new Response(
           JSON.stringify({ success: true, message: "Admin dibuat." }),
           {
@@ -252,13 +447,9 @@ export default {
       }
 
       if (url.pathname === "/api/auth/login" && request.method === "POST") {
-        const supabase = getSupabase(env);
+        requireDatabase(env);
         const body: any = await request.json();
-        const { data: user } = await supabase
-          .from("users")
-          .select("*")
-          .eq("username", body.username)
-          .single();
+        const user = await getUserByUsername(env, body.username);
         if (!user) {
           return new Response(
             JSON.stringify({
@@ -271,8 +462,8 @@ export default {
             },
           );
         }
-        const passwordHash = await hashPassword(body.password);
-        if (passwordHash !== user.password_hash) {
+        const isMatch = await verifyPassword(body.password, user.password_hash);
+        if (!isMatch) {
           return new Response(
             JSON.stringify({ success: false, message: "Password salah." }),
             {
@@ -298,19 +489,75 @@ export default {
       // ==========================================
       if (url.pathname === "/api/db/config" && request.method === "GET") {
         const config = {
-          activeDriver: "supabase",
+          activeDriver,
           sqlite: { filePath: "" },
-          mariadb: { host: "", port: 0, user: "", database: "" },
+          d1: { binding: "DB" },
           supabase: {
             url: env.SUPABASE_URL || "",
             anonKey: env.SUPABASE_ANON_KEY || "",
           },
+          neon: { configured: Boolean(env.NEON_DATABASE_URL) },
         };
+        const isEnvLocked = Boolean(
+          env.DB ||
+            env.DATABASE_DRIVER ||
+            env.NEON_DATABASE_URL ||
+            (env.SUPABASE_URL && env.SUPABASE_ANON_KEY),
+        );
         return new Response(
-          JSON.stringify({ success: true, config, isEnvLocked: hasSupabase }),
+          JSON.stringify({
+            success: true,
+            config,
+            isEnvLocked,
+            canMigrate: false,
+          }),
           {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           },
+        );
+      }
+
+      if (url.pathname === "/api/db/config" && request.method === "POST") {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            message: "Konfigurasi database Workers dikelola melalui Wrangler dan secrets.",
+          }),
+          {
+            status: 403,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          },
+        );
+      }
+
+      if (url.pathname === "/api/db/test" && request.method === "POST") {
+        const body: any = await request.json();
+        const driver = body.driver || activeDriver;
+        const start = Date.now();
+        if (driver === "d1" && env.DB) {
+          await env.DB.prepare("SELECT 1 AS ok").first();
+        } else if (driver === "neon" && env.NEON_DATABASE_URL) {
+          await getNeon(env).query("SELECT 1 AS ok");
+        } else if (
+          driver === "supabase" &&
+          env.SUPABASE_URL &&
+          env.SUPABASE_ANON_KEY
+        ) {
+          const { error } = await getSupabase(env)
+            .from("settings")
+            .select("key")
+            .limit(1);
+          if (error && error.code !== "42P01") throw error;
+        } else {
+          throw new Error(`Driver '${driver}' tidak tersedia di Workers.`);
+        }
+        return new Response(
+          JSON.stringify({
+            success: true,
+            message: `Berhasil terhubung ke ${driver}.`,
+            latencyMs: Date.now() - start,
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
 
@@ -318,69 +565,31 @@ export default {
       // 4. ENDPOINT INVOICES
       // ==========================================
       if (url.pathname === "/api/invoices" && request.method === "GET") {
-        if (!hasSupabase)
-          return new Response(JSON.stringify({ success: true, invoices: [] }), {
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
-        const supabase = getSupabase(env);
-        const { data, error } = await supabase
-          .from("invoices")
-          .select("*")
-          .order("created_at", { ascending: false });
-        if (error) throw error;
-        const invoices = (data || []).map((row: any) => ({
-          id: row.id,
-          invoiceNumber: row.invoice_number,
-          issueDate: row.issue_date,
-          dueDate: row.due_date,
-          status: row.status,
-          client: row.client_data,
-          items: row.items_data,
-          subtotal: parseFloat(row.subtotal) || 0,
-          discountType: row.discount_type,
-          discountValue: parseFloat(row.discount_value) || 0,
-          discountAmount: parseFloat(row.discount_amount) || 0,
-          taxRate: parseFloat(row.tax_rate) || 0,
-          taxAmount: parseFloat(row.tax_amount) || 0,
-          shippingFee: parseFloat(row.shipping_fee) || 0,
-          total: parseFloat(row.total) || 0,
-          notes: row.notes,
-          terms: row.terms,
-          paymentInstructions: row.payment_instructions,
-          paymentMethod: row.payment_method,
-          paymentAccountNumber: row.payment_account_number,
-          downPayment: parseFloat(row.down_payment) || 0,
-          remainingBalance: parseFloat(row.remaining_balance) || 0,
-          paidAt: row.paid_at,
-          paidMethod: row.paid_method,
-          whatsappStatus: row.whatsapp_status,
-          whatsappSentAt: row.whatsapp_sent_at,
-          whatsappRecipient: row.whatsapp_recipient,
-          whatsappLastLog: row.whatsapp_last_log,
-          createdAt: row.created_at,
-          updatedAt: row.updated_at,
-        }));
+        requireDatabase(env);
+        let rows: Record<string, any>[];
+        if (activeDriver === "supabase") {
+          const { data, error } = await getSupabase(env)
+            .from("invoices")
+            .select("*")
+            .order("created_at", { ascending: false });
+          if (error) throw error;
+          rows = data || [];
+        } else {
+          rows = await queryRows(
+            env,
+            "SELECT * FROM invoices ORDER BY created_at DESC",
+          );
+        }
+        const invoices = rows.map(mapInvoiceRow);
         return new Response(JSON.stringify({ success: true, invoices }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
       if (url.pathname === "/api/invoices" && request.method === "POST") {
-        if (!hasSupabase)
-          return new Response(
-            JSON.stringify({
-              success: false,
-              message: "Database tidak aktif.",
-            }),
-            {
-              status: 400,
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-            },
-          );
-
+        requireDatabase(env);
         const body: any = await request.json();
-        const supabase = getSupabase(env);
-        const row = {
+        const row: Record<string, any> = {
           id: body.id,
           invoice_number: body.invoiceNumber,
           issue_date: body.issueDate,
@@ -412,12 +621,65 @@ export default {
           created_at: body.createdAt || new Date().toISOString(),
           updated_at: body.updatedAt || new Date().toISOString(),
         };
-        const { error } = await supabase
-          .from("invoices")
-          .upsert(row, { onConflict: "id" });
-        if (error) throw error;
+        if (activeDriver === "supabase") {
+          const { error } = await getSupabase(env)
+            .from("invoices")
+            .upsert(row, { onConflict: "id" });
+          if (error) throw error;
+        } else {
+          const columns = Object.keys(row);
+          const jsonColumns = new Set(["client_data", "items_data"]);
+          const values = columns.map((column) =>
+            jsonColumns.has(column)
+              ? JSON.stringify(row[column] ?? (column === "items_data" ? [] : {}))
+              : row[column],
+          );
+          const postgresPlaceholders = columns.map((column, index) =>
+            jsonColumns.has(column) ? `$${index + 1}::jsonb` : `$${index + 1}`,
+          );
+          const updates = columns
+            .filter((column) => column !== "id")
+            .map((column) => `${column} = excluded.${column}`);
+          if (activeDriver === "neon") {
+            await getNeon(env).query(
+              `INSERT INTO invoices (${columns.join(", ")})
+               VALUES (${postgresPlaceholders.join(", ")})
+               ON CONFLICT(id) DO UPDATE SET ${updates.join(", ")}`,
+              values,
+            );
+          } else {
+            await executeQuery(
+              env,
+              `INSERT INTO invoices (${columns.join(", ")})
+               VALUES (${columns.map(() => "?").join(", ")})
+               ON CONFLICT(id) DO UPDATE SET ${updates.join(", ")}`,
+              values,
+            );
+          }
+        }
         return new Response(
           JSON.stringify({ success: true, message: "Invoice tersimpan" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      if (
+        url.pathname.startsWith("/api/invoices/") &&
+        request.method === "DELETE"
+      ) {
+        requireDatabase(env);
+        const id = decodeURIComponent(url.pathname.slice("/api/invoices/".length));
+        if (activeDriver === "supabase") {
+          const { error } = await getSupabase(env)
+            .from("invoices")
+            .delete()
+            .eq("id", id);
+          if (error) throw error;
+        } else {
+          await executeQuery(env, "DELETE FROM invoices WHERE id = ?", [id]);
+        }
+        return new Response(
+          JSON.stringify({ success: true, message: "Invoice dihapus" }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
@@ -452,28 +714,14 @@ export default {
           }
         }
 
-        if (!hasSupabase) {
-          return new Response(
-            JSON.stringify({ success: true, value: null, isEnvLocked: false }),
-            {
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-            },
-          );
-        }
-
-        const supabase = getSupabase(env);
+        requireDatabase(env);
 
         if (request.method === "GET") {
-          const { data, error } = await supabase
-            .from("settings")
-            .select("value")
-            .eq("key", key)
-            .single();
-          if (error && error.code !== "PGRST116") throw error;
+          const value = await getSettingValue(env, key);
           return new Response(
             JSON.stringify({
               success: true,
-              value: data?.value || null,
+              value,
               isEnvLocked: false,
             }),
             {
@@ -484,13 +732,35 @@ export default {
 
         if (request.method === "POST") {
           const body: any = await request.json();
-          const { error } = await supabase
-            .from("settings")
-            .upsert(
-              { key, value: body.value, updated_at: new Date().toISOString() },
-              { onConflict: "key" },
+          const updatedAt = new Date().toISOString();
+          if (activeDriver === "supabase") {
+            const { error } = await getSupabase(env)
+              .from("settings")
+              .upsert(
+                { key, value: body.value, updated_at: updatedAt },
+                { onConflict: "key" },
+              );
+            if (error) throw error;
+          } else if (activeDriver === "neon") {
+            await getNeon(env).query(
+              `INSERT INTO settings (key, value, updated_at)
+               VALUES ($1, $2::jsonb, $3)
+               ON CONFLICT (key) DO UPDATE SET
+                 value = EXCLUDED.value,
+                 updated_at = EXCLUDED.updated_at`,
+              [key, JSON.stringify(body.value ?? null), updatedAt],
             );
-          if (error) throw error;
+          } else {
+            await executeQuery(
+              env,
+              `INSERT INTO settings (key, value, updated_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(key) DO UPDATE SET
+                 value = excluded.value,
+                 updated_at = excluded.updated_at`,
+              [key, JSON.stringify(body.value ?? null), updatedAt],
+            );
+          }
           return new Response(JSON.stringify({ success: true }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
@@ -803,6 +1073,156 @@ export default {
             },
           );
         }
+      }
+
+      if (url.pathname === "/api/upload" && request.method === "POST") {
+        if (!env.R2_BUCKET) {
+          throw new Error(
+            "Binding R2_BUCKET belum dikonfigurasi untuk penyimpanan gambar.",
+          );
+        }
+        const body: any = await request.json();
+        if (typeof body.image !== "string" || !body.image) {
+          return new Response(
+            JSON.stringify({ success: false, message: "Tidak ada data gambar." }),
+            {
+              status: 400,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            },
+          );
+        }
+        const dataUrlMatch = body.image.match(
+          /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=]+)$/,
+        );
+        const base64 = dataUrlMatch ? dataUrlMatch[2] : body.image;
+        if (base64.length > 14_000_000) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              message: "Ukuran gambar melebihi batas 10 MB.",
+            }),
+            {
+              status: 413,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            },
+          );
+        }
+        const filename =
+          String(body.filename || "upload.png").split(/[\\/]/).pop() ||
+          "upload.png";
+        const extension = filename
+          .match(/\.(png|jpe?g|webp|gif)$/i)?.[1]
+          ?.toLowerCase();
+        const mimeType =
+          dataUrlMatch?.[1] ||
+          (extension === "jpg" || extension === "jpeg"
+            ? "image/jpeg"
+            : extension
+              ? `image/${extension}`
+              : "");
+        if (!mimeType) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              message: "Format gambar tidak didukung.",
+            }),
+            {
+              status: 400,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            },
+          );
+        }
+        let binary: string;
+        try {
+          binary = atob(base64);
+        } catch {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              message: "Data base64 gambar tidak valid.",
+            }),
+            {
+              status: 400,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            },
+          );
+        }
+        const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+        if (bytes.byteLength > 10 * 1024 * 1024) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              message: "Ukuran gambar melebihi batas 10 MB.",
+            }),
+            {
+              status: 413,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            },
+          );
+        }
+        const key = `public/img_${crypto.randomUUID()}.${extension || "png"}`;
+        await env.R2_BUCKET.put(key, bytes, {
+          httpMetadata: { contentType: mimeType },
+        });
+        return new Response(
+          JSON.stringify({
+            success: true,
+            message: "Gambar berhasil diunggah",
+            url: `/uploads/${key}`,
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      if (url.pathname === "/api/delete-file" && request.method === "POST") {
+        const body: any = await request.json();
+        const fileUrl = String(body.fileUrl || "");
+        if (!fileUrl.startsWith("/uploads/")) {
+          return new Response(
+            JSON.stringify({ success: true }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+        const key = decodeURIComponent(fileUrl.slice("/uploads/".length));
+        if (!key.startsWith("public/") || key.includes("..")) {
+          return new Response(
+            JSON.stringify({ success: false, message: "Path file tidak valid." }),
+            {
+              status: 400,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            },
+          );
+        }
+        if (!env.R2_BUCKET) {
+          throw new Error("Binding R2_BUCKET belum dikonfigurasi.");
+        }
+        await env.R2_BUCKET.delete(key);
+        return new Response(
+          JSON.stringify({ success: true, message: "File R2 dihapus" }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      if (url.pathname.startsWith("/uploads/") && request.method === "GET") {
+        const key = decodeURIComponent(url.pathname.slice("/uploads/".length));
+        if (
+          !key.startsWith("public/") ||
+          key.includes("..") ||
+          !env.R2_BUCKET
+        ) {
+          return new Response("Not found", { status: 404 });
+        }
+        const object = await env.R2_BUCKET.get(key);
+        if (!object) return new Response("Not found", { status: 404 });
+        const headers = new Headers();
+        object.writeHttpMetadata(headers);
+        headers.set("Cache-Control", "public, max-age=31536000, immutable");
+        headers.set(
+          "Content-Type",
+          object.httpMetadata?.contentType || "application/octet-stream",
+        );
+        headers.set("X-Content-Type-Options", "nosniff");
+        return new Response(object.body, { headers });
       }
 
       // ==========================================

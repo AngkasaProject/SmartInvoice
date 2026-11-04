@@ -24,6 +24,7 @@ import {
   getWhatsAppEnvConfig,
 } from "./server/config.ts";
 import { uploadImage } from "./server/storage.ts";
+import { hashPassword, verifyPassword } from "./src/utils/password.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -58,11 +59,14 @@ async function startServer() {
       // dan driver "sqlite" berarti file data/smartinvoice.db (lihat server/db.ts).
       const config = getDatabaseConfig();
       const activeDriver = config?.activeDriver || "sqlite";
+      if (activeDriver === "d1") {
+        throw new Error("Cloudflare D1 hanya tersedia pada runtime Workers.");
+      }
 
       const isDbActive =
         activeDriver === "sqlite" ||
         activeDriver === "supabase" ||
-        activeDriver === "mariadb";
+        activeDriver === "neon";
 
       // Anonim hanya jika driver benar-benar tidak valid.
       const isAnonymous = !isDbActive;
@@ -87,11 +91,7 @@ async function startServer() {
           .json({ success: false, message: "Admin sudah ada." });
       }
 
-      // Hash password (Bun native)
-      const passwordHash = await Bun.password.hash(password, {
-        algorithm: "bcrypt",
-        cost: 10,
-      });
+      const passwordHash = await hashPassword(password);
 
       const newUser = {
         id: `user_${Date.now()}`,
@@ -119,7 +119,7 @@ async function startServer() {
           .json({ success: false, message: "User tidak ditemukan." });
       }
 
-      const isMatch = await Bun.password.verify(password, user.password_hash);
+      const isMatch = await verifyPassword(password, user.password_hash);
 
       if (!isMatch) {
         return res
@@ -218,8 +218,12 @@ async function startServer() {
   app.get("/api/db/config", (req, res) => {
     try {
       const config = getDatabaseConfig();
-      const isEnvLocked = Boolean(process.env.SUPABASE_URL);
-      res.json({ success: true, config, isEnvLocked });
+      const isEnvLocked = Boolean(
+        process.env.DATABASE_DRIVER ||
+          process.env.SUPABASE_URL ||
+          process.env.NEON_DATABASE_URL,
+      );
+      res.json({ success: true, config, isEnvLocked, canMigrate: true });
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
     }

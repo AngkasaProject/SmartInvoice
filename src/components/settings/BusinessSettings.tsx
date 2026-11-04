@@ -305,7 +305,7 @@ export const BusinessSettings: React.FC<BusinessSettingsProps> = ({
                   Pilih Logo
                   <input
                     type="file"
-                    accept="image/*"
+                    accept="image/png,image/jpeg,image/webp,image/gif"
                     onChange={(e) => handleImageSelect(e, "logo")}
                     className="hidden"
                   />
@@ -348,7 +348,7 @@ export const BusinessSettings: React.FC<BusinessSettingsProps> = ({
                   Pilih QRIS
                   <input
                     type="file"
-                    accept="image/*"
+                    accept="image/png,image/jpeg,image/webp,image/gif"
                     onChange={(e) => handleImageSelect(e, "qris")}
                     className="hidden"
                   />
