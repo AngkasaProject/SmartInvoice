@@ -1,6 +1,6 @@
 import { compare } from "bcryptjs";
 
-const PBKDF2_ITERATIONS = 120_000;
+const PBKDF2_ITERATIONS = 100_000;
 const encoder = new TextEncoder();
 
 function toBase64(bytes: Uint8Array): string {
@@ -70,7 +70,7 @@ export async function verifyPassword(
     if (
       !Number.isInteger(iterations) ||
       iterations < 1 ||
-      iterations > 1_000_000 ||
+      iterations > 100_000 ||
       !saltValue ||
       !keyValue
     ) {
