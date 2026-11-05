@@ -343,7 +343,9 @@ URL: http://domain-anda.com/api/orders/webhook
 
 Method: POST
 
-Headers: Authorization: Bearer <WEBHOOK_SECRET>
+Header `Authorization` wajib berisi Webhook Secret Key yang disimpan di Pengaturan API Toko. Secret kosong atau tidak cocok akan ditolak.
+
+Setiap `orderId` hanya membuat satu invoice; pengiriman ulang dengan ID yang sama memperbarui invoice tersebut. Alur produksi tetap diatur melalui Pengaturan → Portal Publik.
 
 Contoh Payload:
 

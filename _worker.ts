@@ -13,11 +13,16 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import { hashPassword, verifyPassword } from "./src/utils/password";
-import { defaultBusinessProfile } from "./src/services/storage";
+import {
+  defaultBusinessProfile,
+  defaultStoreApiConfig,
+} from "./src/services/storage";
 import {
   defaultPortalConfig,
   normalizePortalConfig,
+  remapProductionStage,
 } from "./src/types/portal";
+import type { StoreApiConfig } from "./src/types/invoice";
 
 interface D1Result<T = Record<string, unknown>> {
   results?: T[];
@@ -642,10 +647,202 @@ export default {
         );
       }
 
+      if (
+        ["/api/orders/webhook", "/api/invoices/create-from-order"].includes(url.pathname) &&
+        request.method === "POST"
+      ) {
+        const storeConfig = (await getSettingValue(env, "store_api_config")) as
+          | StoreApiConfig
+          | null;
+        const expectedToken = storeConfig?.webhookSecret || defaultStoreApiConfig.webhookSecret;
+        const suppliedToken = (request.headers.get("authorization") || "").replace(
+          /^Bearer\s+/i,
+          "",
+        );
+        let tokenDifference = suppliedToken.length ^ expectedToken.length;
+        for (let index = 0; index < Math.max(suppliedToken.length, expectedToken.length); index += 1) {
+          tokenDifference |= (suppliedToken.charCodeAt(index) || 0) ^
+            (expectedToken.charCodeAt(index) || 0);
+        }
+        if (!expectedToken || tokenDifference !== 0) {
+          return new Response(
+            JSON.stringify({ success: false, message: "Token webhook tidak valid." }),
+            { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+
+        const body: any = await request.json();
+        const orderId = typeof body.orderId === "string" ? body.orderId.trim() : "";
+        const customer = body.customer;
+        const items = Array.isArray(body.items) ? body.items : [];
+        if (!orderId || orderId.length > 100 || !customer?.name || !customer?.phone || items.length === 0) {
+          return new Response(
+            JSON.stringify({ success: false, message: "Data pesanan tidak lengkap atau tidak valid." }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+        const cleanOrderId = orderId.replace(/[^a-zA-Z0-9-]/g, "");
+        if (!cleanOrderId) {
+          return new Response(
+            JSON.stringify({ success: false, message: "Nomor pesanan tidak valid." }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+
+        const driver = requireDatabase(env);
+        const invoiceId = `inv_store_${cleanOrderId}`;
+        const existingInvoice = await getInvoiceRow(env, invoiceId);
+        const existing = existingInvoice ? mapInvoiceRow(existingInvoice) : null;
+        const today = new Date().toISOString().slice(0, 10);
+        const dueDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+          .toISOString()
+          .slice(0, 10);
+        const formattedItems = items.map((item: any, index: number) => {
+          const quantity = Number(item.quantity) || 1;
+          const unitPrice = Number(item.unitPrice ?? item.price) || 0;
+          return {
+            id: `item_store_${cleanOrderId}_${index}`,
+            name: item.name || "Barang",
+            description: item.description || "",
+            quantity,
+            unit: item.unit || "Pcs",
+            unitPrice,
+            discountPercent: Number(item.discountPercent) || 0,
+            amount: quantity * unitPrice,
+          };
+        });
+        const subtotal = formattedItems.reduce(
+          (total: number, item: { amount: number }) => total + item.amount,
+          0,
+        );
+        const discount = Math.max(0, Number(body.discount) || 0);
+        const shippingFee = Math.max(0, Number(body.shippingFee) || 0);
+        const taxRate = Math.max(0, Number(body.taxRate) || 0);
+        const discountAmount = Math.min(subtotal, discount);
+        const taxAmount = ((subtotal - discountAmount) * taxRate) / 100;
+        const total = Math.max(0, subtotal - discountAmount + taxAmount + shippingFee);
+        const downPayment = Math.min(total, Math.max(0, Number(body.amountPaid) || 0));
+        const now = new Date().toISOString();
+        const invoice = {
+          id: invoiceId,
+          invoiceNumber: `INV-STORE-${cleanOrderId}`,
+          issueDate: existing?.issueDate || today,
+          dueDate: existing?.dueDate || dueDate,
+          status: body.status === "paid" ? "paid" : "unpaid",
+          client: {
+            name: customer.name,
+            phone: customer.phone,
+            email: customer.email || "",
+            company: customer.company || "",
+            address: customer.address || "",
+            npwp: customer.npwp || "",
+          },
+          items: formattedItems,
+          subtotal,
+          discountType: "fixed",
+          discountValue: discount,
+          discountAmount,
+          taxRate,
+          taxAmount,
+          shippingFee,
+          total,
+          downPayment,
+          remainingBalance: Math.max(0, total - downPayment),
+          notes: body.notes || `Pesanan dari Toko Online (Order #${cleanOrderId})`,
+          terms: "Pembayaran tagihan pesanan online.",
+          paidAt: body.status === "paid" ? now : undefined,
+          paidMethod: body.status === "paid" ? "Online Payment Gateway" : undefined,
+          whatsappStatus: "not_sent",
+          productionStage: existing?.productionStage || 0,
+          createdAt: existing?.createdAt || now,
+          updatedAt: now,
+        };
+        const row = {
+          id: invoice.id,
+          invoice_number: invoice.invoiceNumber,
+          issue_date: invoice.issueDate,
+          due_date: invoice.dueDate,
+          status: invoice.status,
+          client_data: invoice.client,
+          items_data: invoice.items,
+          subtotal: invoice.subtotal,
+          discount_type: invoice.discountType,
+          discount_value: invoice.discountValue,
+          discount_amount: invoice.discountAmount,
+          tax_rate: invoice.taxRate,
+          tax_amount: invoice.taxAmount,
+          shipping_fee: invoice.shippingFee,
+          total: invoice.total,
+          notes: invoice.notes,
+          terms: invoice.terms,
+          down_payment: invoice.downPayment,
+          remaining_balance: invoice.remainingBalance,
+          paid_at: invoice.paidAt || null,
+          paid_method: invoice.paidMethod || null,
+          whatsapp_status: invoice.whatsappStatus,
+          production_stage: invoice.productionStage,
+          created_at: invoice.createdAt,
+          updated_at: invoice.updatedAt,
+        };
+        if (driver === "supabase") {
+          const { error } = await getSupabase(env)
+            .from("invoices")
+            .upsert(row, { onConflict: "id" });
+          if (error) throw error;
+        } else {
+          const columns = Object.keys(row);
+          const jsonColumns = new Set(["client_data", "items_data"]);
+          const values = columns.map((column) =>
+            jsonColumns.has(column)
+              ? JSON.stringify((row as Record<string, unknown>)[column] ?? {})
+              : (row as Record<string, unknown>)[column],
+          );
+          const updates = columns
+            .filter((column) => column !== "id")
+            .map((column) => `${column} = excluded.${column}`);
+          const placeholders = columns.map((column, index) =>
+            driver === "neon" && jsonColumns.has(column)
+              ? `$${index + 1}::jsonb`
+              : driver === "neon"
+                ? `$${index + 1}`
+                : "?",
+          );
+          if (driver === "neon") {
+            await getNeon(env).query(
+              `INSERT INTO invoices (${columns.join(", ")}) VALUES (${placeholders.join(", ")}) ON CONFLICT(id) DO UPDATE SET ${updates.join(", ")}`,
+              values,
+            );
+          } else {
+            await executeQuery(
+              env,
+              `INSERT INTO invoices (${columns.join(", ")}) VALUES (${placeholders.join(", ")}) ON CONFLICT(id) DO UPDATE SET ${updates.join(", ")}`,
+              values,
+            );
+          }
+        }
+        return new Response(
+          JSON.stringify({ success: true, message: "Pesanan diproses", invoiceNumber: invoice.invoiceNumber, invoice }),
+          { status: existing ? 200 : 201, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
       if (url.pathname === "/api/public/orders/lookup" && request.method === "POST") {
         const body: any = await request.json();
         const lookup = String(body.lookup || "").trim();
-        if (lookup.length < 3 || lookup.length > 100) {
+        const invoiceNumbers = Array.isArray(body.invoiceNumbers)
+          ? body.invoiceNumbers
+          : [];
+        const batchLookup = invoiceNumbers.length > 0;
+        if (
+          batchLookup
+            ? invoiceNumbers.length > 100 ||
+              invoiceNumbers.some((invoiceNumber: unknown) =>
+                typeof invoiceNumber !== "string" ||
+                invoiceNumber.trim().length < 3 ||
+                invoiceNumber.trim().length > 100
+              )
+            : lookup.length < 3 || lookup.length > 100
+        ) {
           return new Response(
             JSON.stringify({
               success: false,
@@ -675,6 +872,9 @@ export default {
           );
         }
         const normalizedLookup = lookup.toLocaleLowerCase();
+        const requestedInvoiceNumbers = new Set(
+          invoiceNumbers.map((invoiceNumber: string) => invoiceNumber.trim().toLocaleLowerCase()),
+        );
         const digits = lookup.replace(/\D/g, "");
         const normalizePhone = (phone: string) => {
           const value = phone.replace(/\D/g, "");
@@ -686,18 +886,18 @@ export default {
               typeof row.client_data === "string"
                 ? parseJson(row.client_data, {})
                 : row.client_data || {};
-            return (
-              String(row.invoice_number || "").toLocaleLowerCase() ===
-                normalizedLookup ||
+            const invoiceNumber = String(row.invoice_number || "").toLocaleLowerCase();
+            return batchLookup
+              ? requestedInvoiceNumbers.has(invoiceNumber)
+              : invoiceNumber === normalizedLookup ||
               (digits.length >= 8 &&
                 normalizePhone(String(client.phone || "")) ===
-                  normalizePhone(lookup))
-            );
+                  normalizePhone(lookup));
           })
           .sort((a, b) =>
             String(b.created_at || "").localeCompare(String(a.created_at || "")),
           )
-          .slice(0, 10);
+          .slice(0, batchLookup ? 100 : 10);
         if (matchingRows.length === 0) {
           return new Response(
             JSON.stringify({
@@ -742,7 +942,45 @@ export default {
             },
           );
         }
+        const previousPortal = normalizePortalConfig(
+          await getSettingValue(env, "portal_config"),
+        );
         const portal = normalizePortalConfig(await request.json());
+        if (JSON.stringify(previousPortal.workflowStages) !== JSON.stringify(portal.workflowStages)) {
+          const driver = requireDatabase(env);
+          let rows: Record<string, any>[];
+          if (driver === "supabase") {
+            const { data, error } = await getSupabase(env)
+              .from("invoices")
+              .select("id, production_stage");
+            if (error) throw error;
+            rows = data || [];
+          } else {
+            rows = await queryRows(env, "SELECT id, production_stage FROM invoices");
+          }
+          for (const row of rows) {
+            const previousStage = Number(row.production_stage) || 0;
+            const nextStage = remapProductionStage(
+              previousStage,
+              previousPortal.workflowStages,
+              portal.workflowStages,
+            );
+            if (nextStage === previousStage) continue;
+            if (driver === "supabase") {
+              const { error } = await getSupabase(env)
+                .from("invoices")
+                .update({ production_stage: nextStage, updated_at: new Date().toISOString() })
+                .eq("id", row.id);
+              if (error) throw error;
+            } else {
+              await executeQuery(
+                env,
+                "UPDATE invoices SET production_stage = ?, updated_at = ? WHERE id = ?",
+                [nextStage, new Date().toISOString(), row.id],
+              );
+            }
+          }
+        }
         await saveSettingValue(env, "portal_config", portal);
         return new Response(JSON.stringify({ success: true, portal }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },

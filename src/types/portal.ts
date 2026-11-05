@@ -56,10 +56,10 @@ export function normalizePortalConfig(value: unknown): PortalConfig {
         .slice(0, 20)
     : [];
   const workflowStages = Array.isArray(raw.workflowStages)
-    ? raw.workflowStages
+    ? [...new Set(raw.workflowStages
         .filter((stage): stage is string => typeof stage === "string")
         .map((stage) => stage.trim().slice(0, 40))
-        .filter(Boolean)
+        .filter(Boolean))]
         .slice(0, 12)
     : [];
 
@@ -82,4 +82,19 @@ export function normalizePortalConfig(value: unknown): PortalConfig {
         ? workflowStages
         : defaultPortalConfig.workflowStages,
   };
+}
+
+export function remapProductionStage(
+  stage: number,
+  previousStages: string[],
+  nextStages: string[],
+): number {
+  const previousStage = Math.max(0, Math.min(Math.floor(stage), previousStages.length));
+  if (previousStage === previousStages.length) return nextStages.length;
+  const matchingStage = nextStages.indexOf(previousStages[previousStage]);
+  if (matchingStage >= 0) return matchingStage;
+  if (nextStages.length < previousStages.length) {
+    return Math.max(0, Math.min(previousStage - 1, nextStages.length - 1));
+  }
+  return Math.min(previousStage, nextStages.length - 1);
 }

@@ -62,6 +62,13 @@ export const PortalSettings: React.FC<PortalSettingsProps> = ({
       return;
     }
     if (
+      new Set(draft.workflowStages.map((stage) => stage.trim().toLocaleLowerCase())).size !==
+      draft.workflowStages.length
+    ) {
+      toast.error("Nama tahap alur produksi tidak boleh duplikat.");
+      return;
+    }
+    if (
       draft.links.some((link) => {
         try {
           const url = new URL(link.url);

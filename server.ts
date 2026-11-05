@@ -35,11 +35,16 @@ import {
   uploadImage,
 } from "./server/storage.ts";
 import { hashPassword, verifyPassword } from "./src/utils/password.ts";
-import { defaultBusinessProfile } from "./src/services/storage.ts";
+import {
+  defaultBusinessProfile,
+  defaultStoreApiConfig,
+} from "./src/services/storage.ts";
 import {
   defaultPortalConfig,
   normalizePortalConfig,
+  remapProductionStage,
 } from "./src/types/portal.ts";
+import type { StoreApiConfig } from "./src/types/invoice.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -352,7 +357,24 @@ async function startServer() {
   app.post("/api/portal/config", async (req, res) => {
     try {
       if (!(await requireDatabaseSettingsSession(req, res))) return;
+      const previousPortal = normalizePortalConfig(
+        await getSetting("portal_config", defaultPortalConfig),
+      );
       const portal = normalizePortalConfig(req.body);
+      if (JSON.stringify(previousPortal.workflowStages) !== JSON.stringify(portal.workflowStages)) {
+        const invoices = await getAllInvoices();
+        for (const invoice of invoices) {
+          const previousStage = Number(invoice.productionStage) || 0;
+          const nextStage = remapProductionStage(
+            previousStage,
+            previousPortal.workflowStages,
+            portal.workflowStages,
+          );
+          if (nextStage !== previousStage) {
+            await updateInvoiceProductionStage(invoice.id, nextStage);
+          }
+        }
+      }
       await saveSetting("portal_config", portal);
       res.json({ success: true, portal });
     } catch (err: any) {
@@ -363,7 +385,20 @@ async function startServer() {
   app.post("/api/public/orders/lookup", async (req, res) => {
     try {
       const lookup = String(req.body.lookup || "").trim();
-      if (lookup.length < 3 || lookup.length > 100) {
+      const invoiceNumbers = Array.isArray(req.body.invoiceNumbers)
+        ? req.body.invoiceNumbers
+        : [];
+      const batchLookup = invoiceNumbers.length > 0;
+      if (
+        batchLookup
+          ? invoiceNumbers.length > 100 ||
+            invoiceNumbers.some((invoiceNumber: unknown) =>
+              typeof invoiceNumber !== "string" ||
+              invoiceNumber.trim().length < 3 ||
+              invoiceNumber.trim().length > 100
+            )
+          : lookup.length < 3 || lookup.length > 100
+      ) {
         return res.status(400).json({
           success: false,
           message: "Masukkan nomor pesanan atau WhatsApp yang valid.",
@@ -372,17 +407,20 @@ async function startServer() {
 
       const invoices = await getAllInvoices();
       const normalizedLookup = lookup.toLocaleLowerCase();
+      const requestedInvoiceNumbers = new Set(
+        invoiceNumbers.map((invoiceNumber: string) => invoiceNumber.trim().toLocaleLowerCase()),
+      );
       const digits = lookup.replace(/\D/g, "");
       const normalizePhone = (phone: string) => {
         const value = phone.replace(/\D/g, "");
         return value.startsWith("0") ? `62${value.slice(1)}` : value;
       };
-      const byInvoiceNumber = invoices.filter(
-        (invoice) =>
-          invoice.invoiceNumber?.toLocaleLowerCase() === normalizedLookup,
+      const byInvoiceNumber = invoices.filter((invoice) =>
+        batchLookup
+          ? requestedInvoiceNumbers.has(invoice.invoiceNumber?.toLocaleLowerCase())
+          : invoice.invoiceNumber?.toLocaleLowerCase() === normalizedLookup,
       );
-      const byPhone =
-        digits.length >= 8
+      const byPhone = !batchLookup && digits.length >= 8
           ? invoices.filter(
               (invoice) =>
                 normalizePhone(invoice.client?.phone || "") ===
@@ -395,7 +433,7 @@ async function startServer() {
             String(b.createdAt || "").localeCompare(String(a.createdAt || "")),
           )
           .map((invoice) => [invoice.id, invoice]),
-      ).values()].slice(0, 10);
+      ).values()].slice(0, batchLookup ? 100 : 10);
       if (matches.length === 0) {
         return res.status(404).json({
           success: false,
@@ -822,6 +860,20 @@ async function startServer() {
     res: express.Response,
   ) => {
     try {
+      const storeConfig = (await getSetting(
+        "store_api_config",
+        defaultStoreApiConfig,
+      )) as StoreApiConfig;
+      const suppliedToken = req.get("authorization")?.replace(/^Bearer\s+/i, "") || "";
+      const expectedToken = storeConfig.webhookSecret || "";
+      let tokenDifference = suppliedToken.length ^ expectedToken.length;
+      for (let index = 0; index < Math.max(suppliedToken.length, expectedToken.length); index += 1) {
+        tokenDifference |= (suppliedToken.charCodeAt(index) || 0) ^
+          (expectedToken.charCodeAt(index) || 0);
+      }
+      if (!expectedToken || tokenDifference !== 0) {
+        return res.status(401).json({ success: false, message: "Token webhook tidak valid." });
+      }
       const {
         orderId,
         customer,
@@ -829,10 +881,13 @@ async function startServer() {
         discount = 0,
         shippingFee = 0,
         taxRate = 0,
+        amountPaid = 0,
         notes = "",
         status = "unpaid",
       } = req.body;
 
+      if (typeof orderId !== "string" || !orderId.trim() || orderId.length > 100)
+        return res.status(400).json({ success: false, message: "Nomor pesanan tidak valid." });
       if (!customer || !customer.name || !customer.phone)
         return res
           .status(400)
@@ -844,17 +899,18 @@ async function startServer() {
       const dueDateObj = new Date();
       dueDateObj.setDate(dueDateObj.getDate() + 7);
       const dueDate = dueDateObj.toISOString().split("T")[0];
-      const cleanOrderId = (orderId || `${Date.now()}`).replace(
-        /[^a-zA-Z0-9-]/g,
-        "",
-      );
+      const cleanOrderId = orderId.replace(/[^a-zA-Z0-9-]/g, "");
+      if (!cleanOrderId)
+        return res.status(400).json({ success: false, message: "Nomor pesanan tidak valid." });
       const invoiceNumber = `INV-STORE-${cleanOrderId}`;
+      const invoiceId = `inv_store_${cleanOrderId}`;
+      const existingInvoice = await getInvoiceById(invoiceId);
 
       const formattedItems = items.map((item: any, idx: number) => {
         const qty = parseFloat(item.quantity) || 1;
         const price = parseFloat(item.unitPrice || item.price) || 0;
         return {
-          id: `item_store_${Date.now()}_${idx}`,
+          id: `item_store_${cleanOrderId}_${idx}`,
           name: item.name || "Barang",
           description: item.description || "",
           quantity: qty,
@@ -875,12 +931,14 @@ async function startServer() {
       const taxable = Math.max(0, subtotal - discountVal);
       const taxAmount = (taxable * taxRateVal) / 100;
       const total = Math.max(0, taxable + taxAmount + shipVal);
+      const paidAmount = Math.min(total, Math.max(0, Number(amountPaid) || 0));
+      const now = new Date().toISOString();
 
       const newInvoice = {
-        id: `inv_store_${Date.now()}`,
+        id: invoiceId,
         invoiceNumber,
-        issueDate: today,
-        dueDate,
+        issueDate: existingInvoice?.issueDate || today,
+        dueDate: existingInvoice?.dueDate || dueDate,
         status: (status === "paid" ? "paid" : "unpaid") as any,
         client: {
           name: customer.name,
@@ -899,13 +957,16 @@ async function startServer() {
         taxAmount,
         shippingFee: shipVal,
         total,
+        downPayment: paidAmount,
+        remainingBalance: Math.max(0, total - paidAmount),
         notes: notes || `Pesanan dari Toko Online (Order #${cleanOrderId})`,
         terms: "Pembayaran tagihan pesanan online.",
-        paidAt: status === "paid" ? new Date().toISOString() : undefined,
+        paidAt: status === "paid" ? now : undefined,
         paidMethod: status === "paid" ? "Online Payment Gateway" : undefined,
         whatsappStatus: "not_sent" as const,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        productionStage: existingInvoice?.productionStage || 0,
+        createdAt: existingInvoice?.createdAt || now,
+        updatedAt: now,
       };
 
       await saveInvoice(newInvoice);

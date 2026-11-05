@@ -74,7 +74,7 @@ Silakan kirimkan bukti transfer ke nomor WhatsApp ini setelah pembayaran selesai
 };
 
 export const defaultStoreApiConfig: StoreApiConfig = {
-  webhookSecret: "sec_store_live_99218",
+  webhookSecret: "",
   autoSendWhatsAppOnOrder: false,
   defaultOrderStatus: "unpaid",
   invoicePrefix: "INV-STORE",

@@ -5,6 +5,8 @@ import {
   Save,
   Copy,
   Check,
+  Eye,
+  EyeOff,
   Sparkles,
   Loader2,
 } from "lucide-react";
@@ -22,6 +24,7 @@ export const StoreSettings: React.FC<StoreSettingsProps> = ({
   const [storeForm, setStoreForm] = useState<StoreApiConfig>(storeConfig);
   const [copiedUrl, setCopiedUrl] = useState(false);
   const [isSimulating, setIsSimulating] = useState(false);
+  const [showSecret, setShowSecret] = useState(false);
 
   const webhookEndpointUrl =
     typeof window !== "undefined"
@@ -35,19 +38,52 @@ export const StoreSettings: React.FC<StoreSettingsProps> = ({
   };
 
   const handleGenerateSecret = () => {
-    const newSec = "sec_store_" + Math.random().toString(36).substring(2, 12);
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    const newSec = `sec_store_${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
     setStoreForm({ ...storeForm, webhookSecret: newSec });
     toast.info("Secret Key baru dihasilkan. Jangan lupa simpan!");
   };
 
-  // (Opsional) Simulasi order bisa Anda pindahkan ke sini
   const handleSimulate = async () => {
+    if (!storeForm.webhookSecret) {
+      toast.error("Simpan Webhook Secret Key terlebih dahulu.");
+      return;
+    }
     setIsSimulating(true);
-    // ... logika simulasi order (bisa Anda salin dari file lama)
-    setTimeout(() => {
-      toast.success("Simulasi order berhasil dikirim!");
+    try {
+      const response = await fetch(webhookEndpointUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: storeForm.webhookSecret,
+        },
+        body: JSON.stringify({
+          orderId: `SIM-${crypto.randomUUID()}`,
+          customer: {
+            name: "Pelanggan Simulasi",
+            phone: "081234567890",
+          },
+          items: [{ name: "Produk simulasi", quantity: 1, unitPrice: 1000 }],
+          amountPaid: 0,
+          status: "unpaid",
+          notes: "Invoice simulasi dari pengaturan webhook.",
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+      const result = await response.json() as {
+        success?: boolean;
+        message?: string;
+        invoiceNumber?: string;
+      };
+      if (!response.ok || result.success !== true) {
+        throw new Error(result.message || `Webhook merespons ${response.status}.`);
+      }
+      toast.success(`Simulasi berhasil. Invoice ${result.invoiceNumber || "baru"} dibuat.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Simulasi webhook gagal.");
+    } finally {
       setIsSimulating(false);
-    }, 1500);
+    }
   };
 
   return (
@@ -109,13 +145,22 @@ export const StoreSettings: React.FC<StoreSettingsProps> = ({
           </label>
           <div className="flex gap-2">
             <input
-              type="text"
+              type={showSecret ? "text" : "password"}
               value={storeForm.webhookSecret}
               onChange={(e) =>
                 setStoreForm({ ...storeForm, webhookSecret: e.target.value })
               }
+              autoComplete="new-password"
               className="w-full text-xs font-mono p-2.5 rounded-lg border border-slate-200 bg-white"
             />
+            <button
+              type="button"
+              aria-label={showSecret ? "Sembunyikan secret webhook" : "Tampilkan secret webhook"}
+              onClick={() => setShowSecret((visible) => !visible)}
+              className="shrink-0 rounded-lg border border-slate-300 px-3 py-2.5 text-xs hover:bg-slate-50"
+            >
+              {showSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
             <button
               type="button"
               onClick={handleGenerateSecret}
@@ -124,6 +169,9 @@ export const StoreSettings: React.FC<StoreSettingsProps> = ({
               Acak
             </button>
           </div>
+          <p className="mt-1 text-[11px] leading-5 text-slate-500">
+            Gunakan secret yang sama pada pengaturan integrasi AetherSub. Webhook ditolak jika secret kosong atau tidak cocok.
+          </p>
         </div>
 
         <div>
